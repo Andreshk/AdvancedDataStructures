@@ -7,4 +7,4 @@ A collection of exotic &amp; advanced data structures in C++ and Haskell.
 
 To-do:
 * fix existing structures
-* add moar structures
+* add moar structures, such as: Treap and SkewHeap in C++, Persistent Vector, Tiered Vector, SkipList, Binomial Heap, Splay trees, B-trees, Tries (Radix & Patricia), Rope, Suffix Tree, Suffix Array and many more...
