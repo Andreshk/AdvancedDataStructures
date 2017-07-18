@@ -12,7 +12,7 @@ class PairingHeap
         Node* leftChild;
         Node* rightSibling;
         Node* predecessor;
-        Node(const T& _val) : value(_val), leftChild(nullptr),
+        Node(const T& _val) noexcept : value(_val), leftChild(nullptr),
             rightSibling(nullptr), predecessor(nullptr) {}
     };
 
@@ -21,59 +21,59 @@ class PairingHeap
 
     // helper copying/deleting functions
     static Node* copyNode(const Node*, Node*);
-    static void freeNode(const Node*);
+    static void freeNode(const Node*) noexcept;
     void copyFrom(const PairingHeap&);
 
     // Constructing a heap by its root (received, perhaps, from a child node)
     // without knowing the child's size. Used for making a singleton heap.
-    explicit PairingHeap(Node*, size_t = 0);
+    explicit PairingHeap(Node*, size_t = 0) noexcept;
 public:
     class proxy
     {
         friend class PairingHeap<T>;
         Node* ptr;
 
-        explicit proxy(Node*);
+        explicit proxy(Node*) noexcept;
     public:
-        const T& operator*() const;
-        const T* operator->() const;
-        operator bool() const;
-        friend bool operator==(const proxy& lhs, const proxy& rhs) { return lhs.ptr == rhs.ptr; }
-        friend bool operator!=(const proxy& lhs, const proxy& rhs) { return !(lhs == rhs); }
+        const T& operator*() const noexcept;
+        const T* operator->() const noexcept;
+        operator bool() const noexcept;
+        friend bool operator==(const proxy& lhs, const proxy& rhs) noexcept { return lhs.ptr == rhs.ptr; }
+        friend bool operator!=(const proxy& lhs, const proxy& rhs) noexcept { return !(lhs == rhs); }
     };
 
     // standard big 6
-    PairingHeap();
+    PairingHeap() noexcept;
     PairingHeap(const PairingHeap&);
     PairingHeap& operator=(const PairingHeap&);
-    PairingHeap(PairingHeap&&);
-    PairingHeap& operator=(PairingHeap&&);
+    PairingHeap(PairingHeap&&) noexcept;
+    PairingHeap& operator=(PairingHeap&&) noexcept;
     ~PairingHeap();
 
     // x.merge(y) always leaves the heap y empty (!) regardless which
     // root value is smaller; afterwards x contains all values of both x and y.
-    void merge(PairingHeap&);
+    void merge(PairingHeap&) noexcept;
 
     // inserting a value - creates a singleton heap and merges with the current heap
     proxy insert(const T&);
 
     // standard operation; undefined behaviour for empty heaps
-    const T& peek() const;
+    const T& peek() const noexcept;
 
     // the most complex operation: removing the root and merging all of its children
     T extractMin();
 
     // special (!)
-    proxy decreaseKey(proxy, const T&);
+    proxy decreaseKey(proxy, const T&) noexcept;
 
     // more standard methods
-    size_t size() const;
-    bool empty() const;
+    size_t size() const noexcept;
+    bool empty() const noexcept;
     // clear() clears all allocated memory and returns the heap to a valid, empty state
-    void clear();
+    void clear() noexcept;
 
     // for convenience
-    friend void swap(PairingHeap& lhs, PairingHeap& rhs)
+    friend void swap(PairingHeap& lhs, PairingHeap& rhs) noexcept
     {
         std::swap(lhs.root, rhs.root);
         std::swap(lhs.count, rhs.count);
@@ -81,22 +81,22 @@ public:
 };
 
 template<class T>
-PairingHeap<T>::proxy::proxy(Node* _ptr) : ptr(_ptr) {}
+PairingHeap<T>::proxy::proxy(Node* _ptr) noexcept : ptr(_ptr) {}
 
 template<class T>
-const T& PairingHeap<T>::proxy::operator*() const
+const T& PairingHeap<T>::proxy::operator*() const noexcept
 {
     return ptr->value;
 }
 
 template<class T>
-const T* PairingHeap<T>::proxy::operator->() const
+const T* PairingHeap<T>::proxy::operator->() const noexcept
 {
     return &ptr->value;
 }
 
 template<class T>
-PairingHeap<T>::proxy::operator bool() const
+PairingHeap<T>::proxy::operator bool() const noexcept
 {
     return bool(ptr);
 }
@@ -114,7 +114,7 @@ auto PairingHeap<T>::copyNode(const Node* ptr, Node* _pred) -> Node*
 }
 
 template<class T>
-void PairingHeap<T>::freeNode(const Node* ptr)
+void PairingHeap<T>::freeNode(const Node* ptr) noexcept
 {
     if (ptr)
     {
@@ -132,10 +132,10 @@ void PairingHeap<T>::copyFrom(const PairingHeap& other)
 }
 
 template<class T>
-PairingHeap<T>::PairingHeap(Node* _root, size_t _count) : root(_root), count(_count) {}
+PairingHeap<T>::PairingHeap(Node* _root, size_t _count) noexcept : root(_root), count(_count) {}
 
 template<class T>
-PairingHeap<T>::PairingHeap() : PairingHeap(nullptr, 0) {}
+PairingHeap<T>::PairingHeap() noexcept : PairingHeap(nullptr, 0) {}
 
 template<class T>
 PairingHeap<T>::PairingHeap(const PairingHeap& other)
@@ -155,13 +155,13 @@ PairingHeap<T>& PairingHeap<T>::operator=(const PairingHeap& other)
 }
 
 template<class T>
-PairingHeap<T>::PairingHeap(PairingHeap&& other) : PairingHeap()
+PairingHeap<T>::PairingHeap(PairingHeap&& other) noexcept : PairingHeap()
 {
     swap(*this, other);
 }
 
 template<class T>
-PairingHeap<T>& PairingHeap<T>::operator=(PairingHeap&& other)
+PairingHeap<T>& PairingHeap<T>::operator=(PairingHeap&& other) noexcept
 {
     if (this != &other)
     {
@@ -178,7 +178,7 @@ PairingHeap<T>::~PairingHeap()
 }
 
 template<class T>
-void PairingHeap<T>::merge(PairingHeap<T>& other)
+void PairingHeap<T>::merge(PairingHeap<T>& other) noexcept
 {
     if (this == &other || other.empty())
         return;
@@ -209,7 +209,7 @@ auto PairingHeap<T>::insert(const T& _val) -> proxy
 }
 
 template<class T>
-const T& PairingHeap<T>::peek() const
+const T& PairingHeap<T>::peek() const noexcept
 {
     return root->value;
 }
@@ -252,7 +252,7 @@ T PairingHeap<T>::extractMin()
 }
 
 template<class T>
-auto PairingHeap<T>::decreaseKey(proxy pr, const T& newKey) -> proxy
+auto PairingHeap<T>::decreaseKey(proxy pr, const T& newKey) noexcept -> proxy
 {
     // if the proxy does not point to a node in this heap -> undefined behaviour(!)
     // in case of invalid input
@@ -286,19 +286,19 @@ auto PairingHeap<T>::decreaseKey(proxy pr, const T& newKey) -> proxy
 }
 
 template<class T>
-size_t PairingHeap<T>::size() const
+size_t PairingHeap<T>::size() const noexcept
 {
     return count;
 }
 
 template<class T>
-bool PairingHeap<T>::empty() const
+bool PairingHeap<T>::empty() const noexcept
 {
     return (root == nullptr);
 }
 
 template<class T>
-void PairingHeap<T>::clear()
+void PairingHeap<T>::clear() noexcept
 {
     freeNode(root);
     root = nullptr;
