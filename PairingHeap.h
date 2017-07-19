@@ -12,8 +12,8 @@ class PairingHeap
         Node* leftChild;
         Node* rightSibling;
         Node* predecessor;
-        Node(const T& _val) noexcept : value(_val), leftChild(nullptr),
-            rightSibling(nullptr), predecessor(nullptr) {}
+        Node(const T& _val, Node* _pred = nullptr) noexcept : value(_val), leftChild(nullptr),
+            rightSibling(nullptr), predecessor(_pred) {}
     };
 
     Node* root;
@@ -73,11 +73,7 @@ public:
     void clear() noexcept;
 
     // for convenience
-    friend void swap(PairingHeap& lhs, PairingHeap& rhs) noexcept
-    {
-        std::swap(lhs.root, rhs.root);
-        std::swap(lhs.count, rhs.count);
-    }
+    void swap(PairingHeap&) noexcept;
 };
 
 template<class T>
@@ -106,10 +102,9 @@ auto PairingHeap<T>::copyNode(const Node* ptr, Node* _pred) -> Node*
 {
     if (!ptr)
         return nullptr;
-    Node* tmp = new Node(ptr->value);
+    Node* tmp = new Node(ptr->value, _pred);
     tmp->leftChild = copyNode(ptr->leftChild, tmp);
     tmp->rightSibling = copyNode(ptr->rightSibling, tmp);
-    tmp->predecessor = _pred;
     return tmp;
 }
 
@@ -157,7 +152,7 @@ PairingHeap<T>& PairingHeap<T>::operator=(const PairingHeap& other)
 template<class T>
 PairingHeap<T>::PairingHeap(PairingHeap&& other) noexcept : PairingHeap()
 {
-    swap(*this, other);
+    swap(other);
 }
 
 template<class T>
@@ -166,7 +161,7 @@ PairingHeap<T>& PairingHeap<T>::operator=(PairingHeap&& other) noexcept
     if (this != &other)
     {
         clear();
-        swap(*this, other);
+        swap(other);
     }
     return *this;
 }
@@ -184,11 +179,11 @@ void PairingHeap<T>::merge(PairingHeap<T>& other) noexcept
         return;
     if (empty())
     {
-        swap(*this, other);
+        swap(other);
         return;
     }
     if (other.root->value < root->value)
-        swap(*this, other);
+        swap(other);
     other.root->rightSibling = root->leftChild;
     if (root->leftChild)
         root->leftChild->predecessor = other.root;
@@ -244,7 +239,7 @@ T PairingHeap<T>::extractMin()
         for (size_t i = (n - 2 + (n % 2)); i > 0; i -= 2)
             children[i - 2].merge(children[i]);
         // finally, merge the only heap left with the current one
-        swap(*this, children[0]);
+        swap(children[0]);
     }
     // decreasing the heap size (lost in the final swap)
     count = oldCount - 1;
@@ -303,4 +298,17 @@ void PairingHeap<T>::clear() noexcept
     freeNode(root);
     root = nullptr;
     count = 0;
+}
+
+template<class T>
+void PairingHeap<T>::swap(PairingHeap& other) noexcept
+{
+    std::swap(root, other.root);
+    std::swap(count, other.count);
+}
+
+template<class T>
+void swap(PairingHeap<T>& lhs, PairingHeap<T>& rhs) noexcept
+{
+    lhs.swap(rhs);
 }
