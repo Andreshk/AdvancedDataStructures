@@ -1,7 +1,7 @@
 #pragma once
 #include <vector>
-#include <cstddef>   // size_t
-#include <algorithm> // std::swap
+#include <cstddef>    // size_t
+#include <algorithm>  // std::swap
 
 template<class T>
 class PairingHeap
@@ -38,8 +38,8 @@ public:
         const T& operator*() const noexcept;
         const T* operator->() const noexcept;
         operator bool() const noexcept;
-        friend bool operator==(const proxy& lhs, const proxy& rhs) noexcept { return lhs.ptr == rhs.ptr; }
-        friend bool operator!=(const proxy& lhs, const proxy& rhs) noexcept { return !(lhs == rhs); }
+        bool operator==(const proxy&) const noexcept;
+        bool operator!=(const proxy&) const noexcept;
     };
 
     // standard big 6
@@ -95,6 +95,18 @@ template<class T>
 PairingHeap<T>::proxy::operator bool() const noexcept
 {
     return bool(ptr);
+}
+
+template<class T>
+bool PairingHeap<T>::proxy::operator==(const proxy& other) const noexcept
+{
+    return ptr = other.ptr;
+}
+
+template<class T>
+bool PairingHeap<T>::proxy::operator!=(const proxy& other) const noexcept
+{
+    return !(*this == other);
 }
 
 template<class T>
