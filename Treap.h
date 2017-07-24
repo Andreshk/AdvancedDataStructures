@@ -1,5 +1,5 @@
 #pragma once
-#include<cstddef>    // size_t, offsetof
+#include<cstddef>    // size_t
 #include<random>
 #include<functional> // std::less
 #include<type_traits>
@@ -7,34 +7,43 @@
 template<class T, class Compare = std::less<T>>
 class Treap
 {
-    struct Node
+    struct Node;
+    struct Node_base
     {
         Node* parent;
         Node* left;
         Node* right;
+        Node_base(Node* _parent) : parent(_parent), left(nullptr), right(nullptr) {}
+    };
+    struct Node : Node_base
+    {
         T value;
         double pr;
-
-        Node(const T& _val, double _pr, Node* _parent) : value(_val), pr(_pr),
-            parent(_parent), left(nullptr), right(nullptr) {}
+        template<class... Args> // only constructor you need, lol
+        Node(Node* _parent, double _pr, Args&&... args) : Node_base(_parent), value(std::forward<Args>(args)...), pr(_pr) {}
     };
-
-    Node* const dummy_parent; // will always point to itself, i.e. the dummy node is its own parent
-    Node*       root;         // dummy "left", actually points to the root node
-    Node* const dummy_right;  // should always be null in order for ++(--end()) == end()
-        // note: parent pointers will never be null - saves a LOT of runtime checks. Also 
-        // ptr->parent == ptr only for this dummy node - this is a beautiful way to check if an iterator == end() 
-        // Finally, normally --begin() is undefined behaviour - here as a bonus --begin() == end()
+    /* dummy node, for which the following hold:
+     - dummy.parent == &dummy, i.e. the dummy node is its own parent
+     - dummy.left   points to the actual root node of the tree. see root() below
+     - dummy.right  should (and will) always be null in order for ++(--end()) == end() */
+    Node_base dummy;
+    /* Note: parent pointers will never be null - saves a LOT of runtime checks. Also ptr->parent == ptr
+       only for a pointer to the dummy node - this is a beautiful way to check if an iterator == end().
+       Finally, normally --begin() is undefined behaviour - here as a bonus --begin() == end() */
     size_t count;
     Compare comp;
 
-    void _copyFrom(const Treap&);
-    const Node* _find(const T&) const;
-    // _this_as_node()->parent <=> this->dummy_parent
-    // _this_as_node()->left   <=> this->root (!)
-    // _this_as_node()->right  <=> this->dummy_right
+    // _this_as_node()         <=> &dummy, from which we have
+    // _this_as_node()->left   <=> dummy.left <=> root() and
+    // _this_as_node()->parent <=> dummy.parent <=> &dummy <=> _this_as_node()
+    // _this_as_node()         <=> root()->parent as long as root()!=nullptr
+          Node*& root() noexcept;
+    Node* const& root() const noexcept;
           Node* _this_as_node() noexcept;
     const Node* _this_as_node() const noexcept;
+
+    void _copyFrom(const Treap&);
+    const Node* _find(const T&) const;
 
     static Node* _copy(const Node*, Node*);
     static void _free(const Node*) noexcept;
@@ -69,8 +78,16 @@ public:
     ~Treap();
 
     void insert(const T&);
+    void insert(T&&);
+    template<class InputIt>
+    void insert(InputIt, InputIt);
+    void insert(std::initializer_list<T>);
+
     iterator erase(iterator);
+    iterator erase(iterator, iterator);
     iterator find(const T&) const;
+    template<class... Args>
+    void emplace(Args&&...);
 
     iterator begin() const noexcept;
     iterator end() const noexcept;
@@ -101,17 +118,14 @@ const T* Treap<T, Compare>::iterator::operator->() const noexcept
 template<class T, class Compare>
 auto Treap<T, Compare>::iterator::operator++() noexcept -> iterator&
 {
-    if (ptr->right)
+    if (ptr->right) // find the leftmost right ancestor (if there are any)
     {
-        // find the leftmost right ancestor (if there are any)
         ptr = ptr->right;
         while (ptr->left)
             ptr = ptr->left;
     }
-    else
-    {
-        // otherwise, find the smallest right predecessor
-        // ptr->parent will never be nullptr!
+    else // otherwise, find the smallest right predecessor
+    {    // ptr->parent will never be nullptr!
         while (/*ptr->parent &&*/ptr == ptr->parent->right)
             ptr = ptr->parent;
         ptr = ptr->parent;
@@ -189,6 +203,54 @@ auto Treap<T, Compare>::end() const noexcept -> iterator
 
 // tree stuff
 template<class T, class Compare>
+auto Treap<T, Compare>::root() noexcept -> Node*&
+{
+    return dummy.left; // <=> _this_as_node()->left;
+}
+
+template<class T, class Compare>
+auto Treap<T, Compare>::root() const noexcept -> Node* const&
+{
+    return dummy.left;
+}
+
+template<class T, class Compare>
+auto Treap<T, Compare>::_this_as_node() noexcept -> Node*
+{
+    return reinterpret_cast<Node*>(&dummy);
+}
+
+template<class T, class Compare>
+auto Treap<T, Compare>::_this_as_node() const noexcept -> const Node*
+{
+    return reinterpret_cast<const Node*>(&dummy);
+}
+
+template<class T, class Compare>
+void Treap<T, Compare>::_copyFrom(const Treap& other)
+{
+    root() = _copy(other.root(), _this_as_node());
+    count = other.count;
+    comp = other.comp;
+}
+
+template<class T, class Compare>
+auto Treap<T, Compare>::_find(const T& _val) const -> const Node*
+{
+    const Node* location = root();
+    while (location)
+    {
+        if (comp(_val, location->value))
+            location = location->left;
+        else if (comp(location->value, _val))
+            location = location->right;
+        else
+            return location; //found it
+    }
+    return nullptr; // not found, same as return location;
+}
+
+template<class T, class Compare>
 auto Treap<T, Compare>::_copy(const Node* ptr, Node* _pred) -> Node*
 {
     if (!ptr)
@@ -211,34 +273,10 @@ void Treap<T, Compare>::_free(const Node* ptr) noexcept
 }
 
 template<class T, class Compare>
-void Treap<T, Compare>::_copyFrom(const Treap& other)
-{
-    root = _copy(other.root, _this_as_node());
-    count = other.count;
-    comp = other.comp;
-}
-
-template<class T, class Compare>
-auto Treap<T, Compare>::_find(const T& _val) const -> const Node*
-{
-    const Node* location = root;
-    while (location)
-    {
-        if (comp(_val, location->value))
-            location = location->left;
-        else if (comp(location->value, _val))
-            location = location->right;
-        else
-            return location; //found it
-    }
-    return nullptr; // not found, same as return location;
-}
-
-template<class T, class Compare>
 void Treap<T, Compare>::updateParent(const Node* location, Node* newChild) noexcept
 {
     // receives a pointer to a node with a single child (location)
-    // and replaces its with the node pointed by newChild
+    // and replaces its child with the node pointed by newChild
     // if (location->parent) - not needed
     if (location == location->parent->left)
         location->parent->left = newChild;
@@ -246,18 +284,6 @@ void Treap<T, Compare>::updateParent(const Node* location, Node* newChild) noexc
         location->parent->right = newChild;
     if (newChild)
         newChild->parent = location->parent;
-}
-
-template<class T, class Compare>
-auto Treap<T, Compare>::_this_as_node() noexcept -> Node*
-{
-    return reinterpret_cast<Node*>(this);
-}
-
-template<class T, class Compare>
-auto Treap<T, Compare>::_this_as_node() const noexcept -> const Node*
-{
-    return reinterpret_cast<const Node*>(this);
 }
 
 template<class T, class Compare>
@@ -294,7 +320,7 @@ void Treap<T, Compare>::rotateRight(Node*& ptr) noexcept
 
 template<class T, class Compare>
 Treap<T, Compare>::Treap(const Compare& _cmp) noexcept(std::is_nothrow_copy_constructible<Compare>::value)
-    : dummy_parent(_this_as_node()), root(nullptr), dummy_right(nullptr), count(0), comp(_cmp) {}
+    : dummy(_this_as_node()), count(0), comp(_cmp) {}
 
 template<class T, class Compare>
 Treap<T, Compare>::Treap(const Treap& other) : Treap()
@@ -339,14 +365,112 @@ Treap<T, Compare>::~Treap()
 template<class T, class Compare>
 void Treap<T, Compare>::insert(const T& _val)
 {
-    //_insert(_val, 0, root, _this_as_node());
-    Node* location = root;
-    Node* parent = _this_as_node();
+    emplace(_val);
+}
+
+template<class T, class Compare>
+void Treap<T, Compare>::insert(T&& _val)
+{
+    emplace(std::forward<T>(_val));
+}
+
+template<class T, class Compare>
+template<class InputIt>
+void Treap<T, Compare>::insert(InputIt _from, InputIt _to)
+{
+    for (auto it = _from; it != _to; ++it)
+        insert(*it);
+}
+
+template<class T, class Compare>
+void Treap<T, Compare>::insert(std::initializer_list<T> _il)
+{
+    insert(_il.begin(), _il.end());
+}
+
+template<class T, class Compare>
+auto Treap<T, Compare>::erase(iterator _it) -> iterator
+{
+    if (_it == end()) // bonus: in STL erase(end()) is undefined behaviour
+        return _it;
+    const Node* location = _it.ptr;
+    ++_it;
+    // РЎР»РµРґ РєР°С‚Рѕ РЅР°РјРµСЂРёРј С‚СЉСЂСЃРµРЅР°С‚Р° СЃС‚РѕР№РЅРѕСЃС‚ (location->value),
+    // РёРјР°РјРµ С‚СЂРё СЃР»СѓС‡Р°СЏ - РІСЉР·РµР»СЉС‚ РёРјР° 0, 1 РёР»Рё 2 РЅР°СЃР»РµРґРЅРёРєР°.
+    // Р РІ С‚СЂРёС‚Рµ СЃР»СѓС‡Р°СЏ РЅР°РјР°Р»СЏРІР°РјРµ Р±СЂРѕСЏ СЃС‚РѕР№РЅРѕСЃС‚Рё РІ РґСЉСЂРІРѕС‚Рѕ.
+    --count;
+    if (!location->left && !location->right)
+    {
+        // РђРєРѕ РІСЉР·РµР»СЉС‚ РЅСЏРјР° РЅР°СЃР»РµРґРЅРёС†Рё, Р·РЅР°С‡Рё Рµ Р»РёСЃС‚Рѕ Рё РіРѕ "РѕС‚СЂСЏР·РІР°РјРµ", 
+        // РєР°С‚Рѕ РµРґРёРЅСЃС‚РІРµРЅРѕ РёР·РІРµСЃС‚СЏРІР°РјРµ СЂРѕРґРёС‚РµР»СЏ СЃРё С‡Рµ РІРµС‡Рµ РЅСЏРјР° РґРµС‚Рµ.
+        updateParent(location, nullptr);
+    }
+    else if (!location->left || !location->right)
+    {
+        // РђРєРѕ РёРјР° СЃР°РјРѕ РµРґРёРЅ РЅР°СЃР»РµРґРЅРёРє, С‚Рѕ СЂРѕРґРёС‚РµР»СЏС‚ РЅРё РіРѕ "РѕСЃРёРЅРѕРІСЏРІР°".
+        // РџСЂРѕРІРµСЂСЏРІР°РјРµ РґР°Р»Рё РґРµС‚РµС‚Рѕ Рµ Р»СЏРІРѕ РёР»Рё РґСЏСЃРЅРѕ
+        Node* onlyChild = ((location->left) ? location->left : location->right);
+        updateParent(location, onlyChild);
+    }
+    else
+    {
+        // РќР°РјРёСЂР°РјРµ РЅР°Р№-РіРѕР»СЏРјР°С‚Р° СЃС‚РѕР№РЅРѕСЃС‚, РїРѕ-РјР°Р»РєР° РѕС‚ С‚СЉСЂСЃРµРЅР°С‚Р°.
+        // РўРѕР·Рё РІСЉР·РµР» "РёР·РІР°Р¶РґР°РјРµ" РѕС‚ РґСЉСЂРІРѕС‚Рѕ (Р°РЅР°Р»РѕРіРёС‡РЅРѕ РЅР° РїСЂРµРґРёС€РЅРёСЏ СЃР»СѓС‡Р°Р№)
+        // Рё РІРјСЉРєРІР°РјРµ РЅР° РјСЏСЃС‚РѕС‚Рѕ РЅР° РїСЂРµРјР°С…РІР°РЅР°С‚Р° СЃС‚РѕР№РЅРѕСЃС‚.
+        Node* candidate = location->left;
+        while (candidate->right)
+            candidate = candidate->right;
+        // Р·РЅР°РµРј, С‡Рµ Р°РєРѕ С‚Р°Р·Рё РЅР°Р№-РіРѕР»СЏРјР° РїРѕ-РјР°Р»РєР° СЃС‚РѕР№РЅРѕСЃС‚ РёРјР° РґРµС‚Рµ, С‚Рѕ РјРѕР¶Рµ РґР° Рµ СЃР°РјРѕ Р»СЏРІРѕ
+        updateParent(candidate, candidate->left);
+
+        // Р°РєС‚СѓР°Р»РёР·РёСЂР°РјРµ СѓРєР°Р·Р°С‚РµР»РёС‚Рµ РєСЉРј Рё РѕС‚ РґРµС†Р°С‚Р° РЅР° "РєР°РЅРґРёРґР°С‚Р°"
+        candidate->left = location->left;
+        candidate->right = location->right;
+        // (!) Р°РєРѕ РєР°РЅРґРёРґР°С‚СЉС‚ Рµ Р»СЏРІРѕ РґРµС‚Рµ РЅР° location Рё РЅСЏРјР° СЃРІРѕРµ Р»СЏРІРѕ РґРµС‚Рµ,
+        // С‚Рѕ СЃР»РµРґ updateParent location->left СЃС‚Р°РІР° nullptr!!!
+        if (location->left)
+            location->left->parent = candidate;
+        // РїСЂРѕРІРµСЂСЏРІР°РјРµ СЃР°РјРѕ Р»СЏРІРѕС‚Рѕ РґРµС‚Рµ, РїРѕРЅРµР¶Рµ С‚СЉСЂСЃРёРј РІ Р»СЏРІРѕС‚Рѕ РїРѕРґРґСЉСЂРІРѕ Рё РґСЏСЃРЅРѕС‚Рѕ РЅРµ СЃРµ РїСЂРѕРјРµРЅСЏ
+        location->right->parent = candidate;
+
+        // РєР°Р·РІР°РјРµ РЅР° СЂРѕРґРёС‚РµР»СЏ РЅР° location, С‡Рµ РІРµС‡Рµ candidate РјСѓ Рµ СЃРёРЅ
+        // С‚РѕРІР° Р°РєС‚СѓР°Р»РёР·РёСЂР° Рё parent СѓРєР°Р·Р°С‚РµР»СЏ РЅР° candidate
+        updateParent(location, candidate);
+    }
+    // РЅР°Р№-РЅР°РєСЂР°СЏ РѕСЃРІРѕР±РѕР¶РґР°РІР°РјРµ РїР°РјРµС‚С‚Р°
+    delete location;
+    return _it;
+}
+
+template<class T, class Compare>
+auto Treap<T, Compare>::erase(iterator _from, iterator _to) -> iterator
+{
+    iterator res = end();
+    for (auto it = _from; it != _to; ++it)
+        res = erase(it);
+    return res;
+}
+
+template<class T, class Compare>
+auto Treap<T, Compare>::find(const T& _val) const -> iterator
+{
+    const Node* location = _find(_val);
+    return (location ? iterator(location) : end());
+}
+
+template<class T, class Compare>
+template<class ...Args>
+void Treap<T, Compare>::emplace(Args&&... _args)
+{
+    Node* newNode = new Node(nullptr, 0, std::forward<Args>(_args)...);
+    const T& newVal = newNode->value;
+    Node* location = root();
+    Node* parent = _this_as_node(); // <=> root()->parent, but faster
     bool isLeft = true;
     while (location)
     {
         parent = location;
-        if (comp(_val, location->value))
+        if (comp(newVal, location->value))
         {
             location = location->left;
             isLeft = true;
@@ -357,74 +481,14 @@ void Treap<T, Compare>::insert(const T& _val)
             isLeft = false;
         }
     }
-    location = new Node(_val, 0, parent);
+    location = newNode;
+    location->parent = parent;
     if (isLeft)
         parent->left = location;
     else
         parent->right = location;
 
     ++count;
-}
-
-template<class T, class Compare>
-auto Treap<T, Compare>::erase(iterator _it) -> iterator
-{
-    if (_it == end()) // bonus: in STL erase(end()) is undefined behaviour
-        return _it;
-    const Node* location = _it.ptr;
-    ++_it;
-    // След като намерим търсената стойност (location->value),
-    // имаме три случая - възелът има 0, 1 или 2 наследника.
-    // И в трите случая намаляваме броя стойности в дървото.
-    --count;
-    if (!location->left && !location->right)
-    {
-        // Ако възелът няма наследници, значи е листо и го "отрязваме", 
-        // като единствено известяваме родителя си че вече няма дете.
-        updateParent(location, nullptr);
-    }
-    else if (!location->left || !location->right)
-    {
-        // Ако има само един наследник, то родителят ни го "осиновява".
-        // Проверяваме дали детето е ляво или дясно
-        Node* onlyChild = ((location->left) ? location->left : location->right);
-        updateParent(location, onlyChild);
-    }
-    else
-    {
-        // Намираме най-голямата стойност, по-малка от търсената.
-        // Този възел "изваждаме" от дървото (аналогично на предишния случай)
-        // и вмъкваме на мястото на премахваната стойност.
-        Node* candidate = location->left;
-        while (candidate->right)
-            candidate = candidate->right;
-        // знаем, че ако тази най-голяма по-малка стойност има дете, то може да е само ляво
-        updateParent(candidate, candidate->left);
-
-        // актуализираме указателите към и от децата на "кандидата"
-        candidate->left = location->left;
-        candidate->right = location->right;
-        // (!) ако кандидатът е ляво дете на location и няма свое ляво дете,
-        // то след updateParent location->left става nullptr!!!
-        if (location->left)
-            location->left->parent = candidate;
-        // проверяваме само лявото дете, понеже търсим в лявото поддърво и дясното не се променя
-        location->right->parent = candidate;
-
-        // казваме на родителя на location, че вече candidate му е син
-        // това актуализира и parent указателя на candidate
-        updateParent(location, candidate);
-    }
-    // най-накрая освобождаваме паметта
-    delete location;
-    return _it;
-}
-
-template<class T, class Compare>
-auto Treap<T, Compare>::find(const T& _val) const -> iterator
-{
-    const Node* location = _find(_val);
-    return (location ? iterator(location) : end());
 }
 
 template<class T, class Compare>
@@ -442,8 +506,8 @@ bool Treap<T, Compare>::empty() const noexcept
 template<class T, class Compare>
 void Treap<T, Compare>::clear() noexcept
 {
-    _free(root);
-    root = nullptr;
+    _free(root());
+    root() = nullptr;
     count = 0;
 }
 
@@ -451,7 +515,7 @@ template<class T, class Compare>
 void Treap<T, Compare>::swap(Treap& other) noexcept
 {
     using std::swap;
-    swap(root, other.root);
+    swap(root(), other.root());
     swap(count, other.count);
     swap(comp, other.comp);
 }
