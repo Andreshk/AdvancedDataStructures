@@ -2,7 +2,7 @@
 #include <algorithm>	// std::sort, std::inplace_merge
 #include <thread>
 #include <atomic>
-#include <iterator>     // std::iterator_traits
+#include <iterator>		// std::iterator_traits
 #include <exception>	// std::invalid_argument
 #include <type_traits>	// std::enable_if, std::is_same
 
@@ -74,6 +74,7 @@ class impl
         }
         // all other worker threads will be taken care of by ths[0] before it finishes
         ths[0].join();
+        ths[0].~thread();
     }
     ~impl()
     {
@@ -115,6 +116,7 @@ class impl
                 while (idx_to_kill >= ths_created) {}
                 // ...then kill it (after it's done its job)
                 ths[idx_to_kill].join();
+                ths[idx_to_kill].~thread();
                 // this thread's subarray and the victim's subarray are actually consecutive
                 std::inplace_merge(froms[idx], froms[idx_to_kill], tos[idx_to_kill]);
                 // some false cache sharing here, but no need for atomic operations
