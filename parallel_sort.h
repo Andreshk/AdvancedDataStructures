@@ -2,7 +2,7 @@
 #include <algorithm>	// std::sort, std::inplace_merge
 #include <thread>
 #include <atomic>
-#include <iterator>    // std::iterator_traits
+#include <iterator>     // std::iterator_traits
 #include <exception>	// std::invalid_argument
 #include <type_traits>	// std::enable_if, std::is_same
 
