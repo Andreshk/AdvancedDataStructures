@@ -3,7 +3,7 @@
 #include <vector>
 #include <thread>
 #include <atomic>
-#include <iterator>		// std::iterator_traits
+#include <iterator> 	// std::iterator_traits
 #include <type_traits>	// std::enable_if, std::is_same
 
 // uncomment for detailed thread interaction info
@@ -35,13 +35,13 @@ template <class RanIt, class Pred>
 std::enable_if_t<is_random_iterator<RanIt>::value>
     parallel_sort(RanIt from, RanIt to, size_t nthreads, Pred pr = Pred{})
 {
-	// clamp nthreads to a valid value
-	if (nthreads == 0)
-		nthreads = 1;
-	// not a narrowing conversion actually
-	const size_t n = size_t(to - from);
-	if (nthreads > n)
-		nthreads = n;
+    // clamp nthreads to a valid value
+    if (nthreads == 0)
+        nthreads = 1;
+    // not a narrowing conversion actually
+    const size_t n = size_t(to - from);
+    if (nthreads > n)
+        nthreads = n;
     // create an 'impl' instance, which does all the work
     impl<RanIt, Pred> sorter{ from,to,nthreads,pr };
 }
@@ -56,10 +56,10 @@ class impl
     // Threads array, total thread count & smallest >=nthreads power of 2
     std::vector<std::thread> ths;
     const size_t nthreads;
-	const size_t nthrpow2;
+    const size_t nthrpow2;
     std::atomic<size_t> ths_created;
 #ifdef PARALLEL_SORT_DEBUG
-	std::atomic<size_t> ths_joined;
+    std::atomic<size_t> ths_joined;
 #endif // PARALLEL_SORT_DEBUG
 
     // Per-thread subarray info
@@ -67,24 +67,24 @@ class impl
     RanIt* tos;
     Pred pr;
 
-	static constexpr size_t smallestPowOf2(size_t n)
-	{
-		size_t res = 1;
-		while (res < n) res *= 2;
-		return res;
-	}
+    static constexpr size_t smallestPowOf2(size_t n)
+    {
+        size_t res = 1;
+        while (res < n) res *= 2;
+        return res;
+    }
 
     impl(RanIt from, RanIt to, size_t _nthreads, Pred _pr)
         : ths{}, nthreads{ _nthreads }, nthrpow2{ smallestPowOf2(_nthreads) }
-		, ths_created{ 0 }, froms{ new RanIt[_nthreads] }, tos{ new RanIt[_nthreads] }
+        , ths_created{ 0 }, froms{ new RanIt[_nthreads] }, tos{ new RanIt[_nthreads] }
         , pr{ _pr }
 #ifdef PARALLEL_SORT_DEBUG
-		, ths_joined{ 0 }
+        , ths_joined{ 0 }
 #endif // PARALLEL_SORT_DEBUG
     {
-		// reserve memory to guarantee that no vector reallocations will occur
-		// we need this guarantee for the interactions between threads to work properly (!)
-		ths.reserve(nthreads);
+        // reserve memory to guarantee that no vector reallocations will occur
+        // we need this guarantee for the interactions between threads to work properly (!)
+        ths.reserve(nthreads);
         const size_t subSize = (to - from) / nthreads;
         for (size_t idx = 0; idx < nthreads; ++idx)
         {
@@ -95,7 +95,7 @@ class impl
         // the final subarray may be a little bit bigger (<nthreads more elements than the rest)
         tos[nthreads - 1] = to;
         // invariant: at _any discrete moment of time_ 'ths_created'
-		// is not greater than the # of actually constructed threads
+        // is not greater than the # of actually constructed threads
         for (size_t idx = 0; idx < nthreads; ++idx)
         {
             ths.emplace_back(&impl::sort, this, idx);
@@ -104,9 +104,9 @@ class impl
         // all other worker threads will be taken care of by ths[0] before it finishes
         ths[0].join();
 #ifdef PARALLEL_SORT_DEBUG
-		++ths_joined;
-		std::cout << "nthreads=" << nthreads << "\nnthrpow2=" << nthrpow2
-				  << "\nths_created=" << ths_created << "\nths_joined=" << ths_joined << "\n";
+        ++ths_joined;
+        std::cout << "nthreads=" << nthreads << "\nnthrpow2=" << nthrpow2
+                  << "\nths_created=" << ths_created << "\nths_joined=" << ths_joined << "\n";
 #endif // PARALLEL_SORT_DEBUG
 
     }
@@ -121,7 +121,7 @@ class impl
     {
         // sort the subarray naively
         std::sort(froms[idx], tos[idx], pr);
-        // then merge in parallel
+        // then parallel merge
         merge_threads(idx);
     }
 
@@ -144,19 +144,19 @@ class impl
             {
                 // find the victim (thread to merge)...
                 size_t idx_to_kill = idx + i;
-				// nobody left to kill, so wait to die as well
-				if (idx_to_kill >= nthreads)
-					return;
+                // nobody left to kill, so wait to die as well
+                if (idx_to_kill >= nthreads)
+                    return;
                 // make sure the victim has actually been created...
                 // (needed when per-thread work takes less time than thread creation)
                 while (idx_to_kill >= ths_created) {}
                 // ...then kill it (after it's done its job)
                 ths[idx_to_kill].join();
 #ifdef PARALLEL_SORT_DEBUG
-				++ths_joined;
-				coutmtx.lock();
-				std::cout << "#" << idx << " <- #" << idx_to_kill << "\n";
-				coutmtx.unlock();
+                ++ths_joined;
+                coutmtx.lock();
+                std::cout << "#" << idx << " <- #" << idx_to_kill << "\n";
+                coutmtx.unlock();
 #endif // PARALLEL_SORT_DEBUG
                 // this thread's subarray and the victim's subarray are actually consecutive
                 std::inplace_merge(froms[idx], froms[idx_to_kill], tos[idx_to_kill]);
