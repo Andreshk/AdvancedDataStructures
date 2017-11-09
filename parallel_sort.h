@@ -121,7 +121,7 @@ class impl
     {
         // sort the subarray naively
         std::sort(froms[idx], tos[idx], pr);
-        // then parallel merge
+        // then merge in parallel
         merge_threads(idx);
     }
 
