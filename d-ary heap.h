@@ -1,12 +1,15 @@
 #pragma once
 #include <vector>
-#include <cstddef>     // size_t
-#include <functional>  // std::less
+#include <cstddef>      // size_t
+#include <algorithm>    // std::min
+#include <functional>   // std::less
+#include <type_traits>  // std::is_nothrow_swappable
 
 template<class T, size_t D, class Compare = std::less<T>>
-class D_heap
+class d_heap
 {
     static_assert(D >= 2, "d-ary heaps must have degree D not less than 2!");
+    static constexpr bool is_nothrow_comparable = true; // needs fixing!
 
     std::vector<T> data;
     Compare comp;
@@ -14,22 +17,21 @@ class D_heap
     static size_t parentIdx(size_t idx) noexcept { return (idx - 1) / D; }
     static size_t leftmostChildIdx(size_t idx) noexcept { return D*idx + 1; }
     static size_t rightmostChildIdx(size_t idx) noexcept { return D*idx + D; }
-    size_t minChildIdx(size_t idx) const noexcept
+    size_t minChildIdx(size_t idx) const noexcept(is_nothrow_comparable)
     {
-        // unfortunately, one cannot partially specialize a single member function,
-        // like making D_heap<T,2,...>::f behave differently than D_heap<T,3,...>::f
-        // without writing separate and whole D_heap<T,2,...> and D_heap<T,3,...>
-        // classes. Bummer.
+        // Edge case handling (e.g. D == 2 or D == 4) may not lead to benefits...
+        // Invariant: idx has at least one child
         size_t res = leftmostChildIdx(idx);
-        const size_t r = rightmostChildIdx(idx), n = data.size();
-        for (size_t i = res + 1; i <= r && i < n; i++)
+        // actual rightmost child
+        const size_t r = std::min(rightmostChildIdx(idx), data.size() - 1);
+        for (size_t i = res + 1; i <= r; i++)
             if (comp(data[i], data[res]))
                 res = i;
         return res;
     }
 
-    // std::is_nothrow_swappable<T> is supported officially only since c++17
-    void bubbleUp() //noexcept(std::is_nothrow_swappable<T>::value)
+    void bubbleUp() noexcept(std::is_nothrow_swappable_v<T>
+                          && is_nothrow_comparable)
     {
         using std::swap;
         size_t idx = data.size() - 1;
@@ -42,7 +44,8 @@ class D_heap
             idx = pIdx;
         }
     }
-    void bubbleDown(size_t idx = 0) //noexcept(std::is_nothrow_swappable<T>::value)
+    void bubbleDown(size_t idx = 0) noexcept(std::is_nothrow_swappable_v<T>
+                                          && is_nothrow_comparable)
     {
         using std::swap;
         while (leftmostChildIdx(idx) < data.size()) // is leaf <=> no children
@@ -56,8 +59,9 @@ class D_heap
     }
 
 public:
-    D_heap(const std::vector<T>& _data = std::vector<T>(),
-               const Compare& _comp = Compare()) : data(_data), comp(_comp)
+    d_heap(const std::vector<T>& _data = std::vector<T>{},
+        const Compare& _comp = Compare{})
+        : data{ _data }, comp{ _comp }
     {
         // building the heap in linear time: call bubbleDown for all non-leaf indices
         const size_t n = data.size();
@@ -81,30 +85,33 @@ public:
     bool empty() const noexcept { return data.empty(); }
     size_t size() const noexcept { return data.size(); }
 
-    void push(const T& val)
+    void push(const T& val) noexcept(noexcept(emplace(val)))
     {
-        data.push_back(val);
-        bubbleUp();
+        emplace(val);
     }
-    void push(T&& val)
+    void push(T&& val) noexcept(noexcept(emplace(std::move(val))))
     {
-        data.push_back(std::move(val));
-        bubbleUp();
+        emplace(std::move(val));
     }
     template<class... Args>
-    void emplace(Args&&... args)
+    void emplace(Args&&... args) noexcept(std::is_nothrow_constructible_v<T, Args&&...>
+                                       && std::is_nothrow_swappable_v<T>
+                                       && is_nothrow_comparable)
     {
         data.emplace_back(std::forward<Args>(args)...);
         bubbleUp();
     }
-    void pop()
+
+    void pop() noexcept(std::is_nothrow_swappable_v<T>
+                     && std::is_nothrow_destructible_v<T> // this should almost never be false
+                     && is_nothrow_comparable)
     {
         std::swap(data.front(), data.back());
         data.pop_back();
         bubbleDown();
     }
 
-    void swap(D_heap& other) noexcept(noexcept(swap(data, other.data)) && noexcept(swap(comp, other.comp)))
+    void swap(d_heap& other) noexcept(noexcept(swap(data, other.data)) && noexcept(swap(comp, other.comp)))
     {
         using std::swap;
         swap(data, other.data);
@@ -113,8 +120,8 @@ public:
 };
 
 template<class T, size_t D, class Compare>
-void swap(D_heap<T, D, Compare>& lhs,
-          D_heap<T, D, Compare>& rhs) noexcept(noexcept(lhs.swap(rhs)))
+void swap(d_heap<T, D, Compare>& lhs,
+          d_heap<T, D, Compare>& rhs) noexcept(noexcept(lhs.swap(rhs)))
 {
     lhs.swap(rhs);
 }
