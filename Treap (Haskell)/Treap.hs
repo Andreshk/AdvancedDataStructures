@@ -20,45 +20,45 @@ import Data.List (foldl')
 -- Тази структура е обвивка на реалния treap и делегира повечето функционалности
 -- на него. За подробно описание и документация вж. TreapLogic.hs, където един
 -- имплементирана същинската логика за структурата от данни Treap.
-data Treap a = Pair (TL.Treap a) StdGen
+data Treap a = Treap (TL.Tree a) StdGen
 
 instance Show a => Show (Treap a) where
-    show (Pair tr _) = show tr
+    show (Treap tr _) = show tr
 
 -- Създаване на празен treap по seed на неговия генератор на произволни числа
 makeTreap :: Int -> Treap a
-makeTreap seed = Pair TL.Empty (mkStdGen seed)
+makeTreap seed = Treap TL.Empty (mkStdGen seed)
 
 -- Проверка дали даден treap е празен
 empty :: Treap a -> Bool
-empty (Pair tr _) = TL.empty tr
+empty (Treap tr _) = TL.empty tr
 
 -- Проверка дали даден treap е валиден
 valid :: (Eq a, Ord a) => Treap a -> Bool
-valid (Pair tr _) = TL.valid tr
+valid (Treap tr _) = TL.valid tr
 
 -- Вмъкване на елемент в treap
 insert :: (Eq a, Ord a) => a -> Treap a -> Treap a
-insert x (Pair tr gen) = Pair newtr newgen
+insert x (Treap tr gen) = Treap newtr newgen
   where (newpr, newgen) = randomR (0.0, 1.0) gen
         newtr = TL.insert x newpr tr
 
 -- Премахване на елемент от treap
 remove :: (Eq a, Ord a) => a -> Treap a -> Treap a
-remove x (Pair tr gen) = Pair (TL.remove x tr) gen
+remove x (Treap tr gen) = Treap (TL.remove x tr) gen
 
 -- Търсене на елемент в treap
 search :: (Eq a, Ord a) => a -> Treap a -> Bool
-search x (Pair tr _) = TL.search x tr
+search x (Treap tr _) = TL.search x tr
 
 -- Сливане на два treap-а
 merge :: (Eq a, Ord a) => Treap a -> Treap a -> Treap a
-merge (Pair tr1 gen) (Pair tr2 _) = Pair (TL.merge tr1 tr2) gen
+merge (Treap tr1 gen) (Treap tr2 _) = Treap (TL.merge tr1 tr2) gen
 
 -- Разцепване на даден treap на два treap-а така, че в единия да са всички
 -- ключове, по-малки от даден ключ х, а в другия да са всички по-големи от x.
 split :: (Eq a, Ord a) => a -> Treap a -> (Treap a, Treap a)
-split x (Pair tr gen) = (Pair left gen, Pair right gen)
+split x (Treap tr gen) = (Treap left gen, Treap right gen)
   where (left, right) = TL.split x tr
 
 -- Вмъкване на множество елементи в treap
@@ -71,11 +71,11 @@ removeList = flip $ foldl' (flip remove)
 
 -- Височина на treap
 height :: Treap a -> Int
-height (Pair tr _) = TL.height tr
+height (Treap tr _) = TL.height tr
 
 -- Брой съдържани елементи в treap
 size :: Treap a -> Int
-size (Pair tr _) = TL.size tr
+size (Treap tr _) = TL.size tr
 
 -- Построяване на нов treap по списък от елементи
 -- сложност: O(nlgn)
@@ -84,7 +84,7 @@ fromList seed lst = insertList lst (makeTreap seed)
 
 -- Списък от елементите в даден treap, подредени в сортиран ред
 toList :: Treap a -> [a]
-toList (Pair tr _) = TL.toList tr
+toList (Treap tr _) = TL.toList tr
 
 -- Сортиране на списък чрез вкарване на всички елементи в treap
 -- и извеждането им в сортиран ред. Очевидно O(nlgn) очаквана сложност.
