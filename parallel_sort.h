@@ -1,10 +1,10 @@
 #pragma once
-#include <algorithm>	// std::sort, std::inplace_merge
+#include <algorithm>    // std::sort, std::inplace_merge
 #include <vector>
 #include <thread>
 #include <atomic>
-#include <iterator> 	// std::iterator_traits
-#include <type_traits>	// std::enable_if, std::is_same
+#include <iterator>     // std::iterator_traits
+#include <type_traits>  // std::enable_if, std::is_same
 
 // uncomment for detailed thread interaction info
 //#define PARALLEL_SORT_DEBUG
@@ -63,8 +63,8 @@ class impl
 #endif // PARALLEL_SORT_DEBUG
 
     // Per-thread subarray info
-    RanIt* froms;
-    RanIt* tos;
+    std::vector<RanIt> froms;
+    std::vector<RanIt> tos;
     Pred pr;
 
     static constexpr size_t smallestPowOf2(size_t n)
@@ -76,7 +76,7 @@ class impl
 
     impl(RanIt from, RanIt to, size_t _nthreads, Pred _pr)
         : ths{}, nthreads{ _nthreads }, nthrpow2{ smallestPowOf2(_nthreads) }
-        , ths_created{ 0 }, froms{ new RanIt[_nthreads] }, tos{ new RanIt[_nthreads] }
+        , ths_created{ 0 }, froms{ _nthreads }, tos{ _nthreads }
         , pr{ _pr }
 #ifdef PARALLEL_SORT_DEBUG
         , ths_joined{ 0 }
@@ -109,11 +109,6 @@ class impl
                   << "\nths_created=" << ths_created << "\nths_joined=" << ths_joined << "\n";
 #endif // PARALLEL_SORT_DEBUG
 
-    }
-    ~impl()
-    {
-        delete[] froms;
-        delete[] tos;
     }
 
     // per-thread work
