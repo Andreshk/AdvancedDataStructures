@@ -1,10 +1,8 @@
 module SkewHeap
-( insert, merge, (<>), getMin,
+( insert, (<>), merge, getMin,
   extractMin, empty, size,
   fromList, toList, sort
 ) where
-
-import Data.List (foldl')
 
 -- No need for comments - the code is self-documenting.
 -- The basic operations such as insert, merge and extractMin have O(lgn)
@@ -12,26 +10,25 @@ import Data.List (foldl')
 data SkewHeap a = Empty | Node a (SkewHeap a) (SkewHeap a)
 
 instance (Ord a) => Eq (SkewHeap a) where
-    Empty == Empty = True
-    h1 == h2 = (toList h1) == (toList h2)
+    sh1 == sh2 = (toList sh1) == (toList sh2)
 
 instance (Show a) => Show (SkewHeap a) where
     show Empty = "SkewHeap{}"
-    show h = let Just val = getMin h in "SkewHeap{" ++ show val ++ "..}"
+    show (Node val _ _) = "SkewHeap{" ++ show val ++ "..}"
 
 insert :: Ord a => a -> SkewHeap a -> SkewHeap a
-insert x t = singleton x <> t
+insert x sh = singleton x <> sh
   where singleton x = Node x Empty Empty
-
-merge :: Ord a => SkewHeap a -> SkewHeap a -> SkewHeap a
-merge t1 Empty = t1
-merge Empty t2 = t2
-merge t1@(Node v1 l1 r1) t2@(Node v2 l2 r2)
-    | v1 < v2   = Node v1 (t2 <> r1) l1
-    | otherwise = Node v2 (t1 <> r2) l2
 
 (<>) :: Ord a => SkewHeap a -> SkewHeap a -> SkewHeap a
 (<>) = merge
+
+merge :: Ord a => SkewHeap a -> SkewHeap a -> SkewHeap a
+merge sh1 Empty = sh1
+merge Empty sh2 = sh2
+merge sh1@(Node v1 l1 r1) sh2@(Node v2 l2 r2)
+    | v1 < v2   = Node v1 (sh2 <> r1) l1
+    | otherwise = Node v2 (sh1 <> r2) l2
 
 getMin :: SkewHeap a -> Maybe a
 getMin Empty = Nothing
@@ -50,13 +47,12 @@ size :: Ord a => SkewHeap a -> Int
 size = length . toList
 
 fromList :: Ord a => [a] -> SkewHeap a
-fromList = foldl' (flip insert) Empty
+fromList = foldl (flip insert) Empty
 -- fromList = foldr insert Empty
 
 toList :: Ord a => SkewHeap a -> [a]
-toList = toList' . extractMin
-  where toList' Nothing = []
-        toList' (Just (val, t)) = val : toList' (extractMin t)
+toList sh = case extractMin sh of Nothing -> []
+                                  Just (val, sh1) -> val : toList sh1
 
 sort :: Ord a => [a] -> [a]
 sort = toList . fromList
