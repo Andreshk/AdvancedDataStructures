@@ -1,8 +1,8 @@
 module TreapLogic where
 
--- Този модул съдържа реалната логика на treap-а.
--- За по-малко объркване тук Tree е името на структурата
--- и тук са дефинирани всички специални за treap-овете функции.
+-- This module contains the actual treap logic.
+-- Here the structure is named "Tree" in order to avoid
+-- confusion. All specific treap functions are implemented here.
 data Tree a = Empty | Node a Double (Tree a) (Tree a)
 
 instance Show a => Show (Tree a) where
@@ -11,7 +11,7 @@ instance Show a => Show (Tree a) where
                  then "Treap too large for printing!"
                  else prettyPrint 0 tr
 
--- За красиво извеждане на дървото на екрана - като "нормалните" типове данни 
+-- Pretty-printing a tree
 prettyPrint :: Show a => Int -> Tree a -> String
 prettyPrint _ Empty = ""
 prettyPrint pad tr@(Node val pr left right) = 
@@ -22,40 +22,50 @@ prettyPrint pad tr@(Node val pr left right) =
         peekRoot Empty = "#"
         peekRoot (Node val pr _ _) = show val ++ " {" ++ show pr ++ "}"
 
--- Проверка дали даден treap е празен
+-- Check whether a treap is empty
 empty :: Tree a -> Bool
 empty Empty = True
 empty _ = False
 
--- Проверка дали даден treap е валиден:
--- КЪМ МОМЕНТА НЕ РАБОТИ КОРЕКТНО (!)
--- - за всеки възел искаме стойността в левия наследник да е по-малка от тази във възела;
---   аналогично стойността в десния наследник да е по-голяма от тази във възела
---   -> оттам TREE като обикновено двоично наредено дърво, гледайки ключовете (т.е. съдържаните данни)
--- - за всеки възел искаме приоритетите в двата наследника да са по-големи от този във възела
---   -> оттам HEAP като обикновена двоична пирамида, гледайки "приоритетите" (произволно генерираните числа)
--- След всяка операция потребителят може да проверява дали получената структура е валидна.
--- сложност: O(n)
-valid :: (Eq a, Ord a) => Tree a -> Bool
-valid Empty = True
-valid (Node val pr left right) = (empty left  || val > (getValue left)  && pr <= (getPriority left)  && valid left)
-                              && (empty right || val < (getValue right) && pr <= (getPriority right) && valid right)
-  where getValue :: Tree a -> a
-        getValue (Node val _ _ _) = val
-        getPriority :: Tree a -> Double
-        getPriority (Node _ pr _ _) = pr
+-- Minimal and maximal value in a treap, via a helper function
+getMin :: Tree a -> a
+getMin (Node v _ Empty _) = v
+getMin (Node _ _ left _)  = getMin left
 
--- Балансирането на едно дърво представлява поредица от ротации.
--- При всяка операция insert/remove се налагат ротации само по "пътя"
--- от корена до листото с търсения елемент, т.е. логаритмичен брой пъти.
--- Как се ротира дадено дърво се преценява само според приоритетите в двата
--- директни наследника; като в единия случай функцията се извиква рекурсивно
--- надолу, а в другия се извиква нагоре от back-trackingа на рекурсивната
--- функция insert. С тази функция можем да пренареждаме дървото като избутваме
--- някой елемент до "дъното" на дървото (т.е. в листо) или го караме да "изплува" в корена
--- на дървото. Такова пренареждане не нарушава инвариантата на двоичното наредено дърво (!)
--- сложност: О(lgn) в най-лошия случай, ако флагът е True и функцията се извиква
--- рекурсивно надолу и О(1) иначе (локално балансиране)
+getMax :: Tree a -> a
+getMax (Node v _ _ Empty) = v
+getMax (Node _ _ _ right) = getMax right
+
+{-
+Validity check:
+- for each node we want all values in the left subtree to be smaller than the value
+  in the node -> therefore TREE, as a binary search tree for the values
+- for each node we want the priorities in its left and right children to be higher
+  than the node priority -> therefore HEAP, formed by the node priorities
+After each treap operation the treap can be checked for validity. Complexity: O(n)
+-}
+valid :: Ord a => Tree a -> Bool
+valid Empty = True
+valid t = valid' t (getMin t) (getMax t) 0.0
+  where valid' :: Ord a => Tree a -> a -> a -> Double -> Bool
+        valid' Empty _ _ _ = True
+        valid' (Node val pr left right) min' max' pr'
+            = pr >= pr' && min' <= val && val <= max'
+            && valid' left  min' val pr
+            && valid' right val max' pr
+
+{-
+Tree rabalancing is a series of rotation. During each insertion or deletion
+only the nodes on the path from the root to the value in question need rotating,
+meaning O(lgn) rotations on average. How a node should be rotated depends only
+on the priorities in the two children nodes. The function either calls itself
+recursively or is called during back-tracking of the insertion function.
+This function also helps us rearrange the tree and either "sink" a node to
+a leaf or "float" it to the root.
+Such a rearrangement does not invalidate the BST invariant (!).
+Complexity: O(lgn) average when the flag is set and the function calls itself
+recursively to "sink" a value; and O(1) otherwise (local rebalance).
+-}
 rebalance :: Bool -> Tree a -> Tree a
 rebalance flag tr@(Node _ _ Empty Empty) = if flag then Empty else tr
 rebalance flag tr@(Node _ pr left right)
@@ -70,33 +80,32 @@ rebalance flag tr@(Node _ pr left right)
         specialPr Empty = 2.0
         specialPr (Node _ pr _ _) = pr
 
--- Лява и дясна ротации на двоично наредено дърво.
--- Няма да се налагат други (невалидни) извиквания.
--- Да сте виждали по-елегантни реализации на тези функции? That's Haskell for you.
+-- Left and right, or counter-clockwise and clockwise rotations
+-- No other calls needed
+-- Ever seen more elegant implementations? That's Haskell for you.
 rotateLeft :: Tree a -> Tree a
 rotateLeft (Node xv xp atr (Node yv yp btr ctr)) = Node yv yp (Node xv xp atr btr) ctr
 
 rotateRight :: Tree a -> Tree a
 rotateRight (Node yv yp (Node xv xp atr btr) ctr) = Node xv xp atr (Node yv yp btr ctr)
 
--- "Private" функция за вмъкване в самото дърво, използва се хитро от split и merge
--- При вмъкване на елемент в дървото първо го добавяме като в обикновено ДНД,
--- след което с ротации той "изплува" нагоре, докато приоритетите образуват
--- валидна пирамида.
--- сложност: O(lgn) очаквана (и най-често), O(n) в най-лошия случай
+-- "Private" function for value insertion, used cleverly by split
+-- and merge. Inserting a value works by adding it as in a regular
+-- BST and rotating it up until the priorities form a valid heap.
+-- Complexity: O(lgn) expected (and most often), O(n) worst-case
 insert :: (Eq a, Ord a) => a -> Double -> Tree a -> Tree a
 insert x newpr Empty = Node x newpr Empty Empty
 insert x newpr tr@(Node val pr left right)
   | x < val  = rebalance False $ Node val pr (insert x newpr left) right
   | x > val  = rebalance False $ Node val pr left (insert x newpr right)
-  | x == val = if newpr == (-1.0) -- използва се при split
+  | x == val = if newpr == (-1.0) -- used during split
                then rebalance False $ Node x newpr left right
                else tr
 
--- При премахване на един елемент първо го намираме, след което увеличаваме
--- неговия приоритет и балансираме надолу - с голям приоритет той "потъва"
--- и става листо, което листо после отрязваме.
--- сложност: O(lgn) очаквана (и най-често), O(n) в най-лошия случай 
+-- Value deletion: first we find the value, than increase its
+-- priority and rebalance it downwards - with the new priority
+-- it sinks and becomes a leaf, which is easily cut from the tree.
+-- Complexity: O(lgn) expected (and most often), O(n) worst-case
 remove :: (Eq a, Ord a) => a -> Tree a -> Tree a
 remove _ Empty = Empty
 remove x tr@(Node val pr left right)
@@ -104,8 +113,8 @@ remove x tr@(Node val pr left right)
     | x > val  = Node val pr left (remove x right)
     | x == val = rebalance True $ Node val 2.0 left right
 
--- Търсенето е стандартно търсене в двоично наредено дърво
--- сложност: O(lgn) очаквана (и най-често), O(n) в най-лошия случай
+-- Value search works like a standard BST
+-- Complexity: O(lgn) expected (and most often), O(n) worst-case
 search :: (Eq a, Ord a) => a -> Tree a -> Bool
 search _ Empty = False
 search x (Node val _ left right)
@@ -113,61 +122,51 @@ search x (Node val _ left right)
     | x > val  = search x right
     | x == val = True
 
--- Сливането на два treap-а изисква най-големия елемент в левия treap
--- да е по-малък от най-малкия елемент в десния treap. Осъществява се
--- с фалшиво добавяне на стойността в корена на едното дърво с максимален приоритет,
--- който след балансиране на дървото се намира в някое листо. Това листо
--- после отрязваме, за да избегнем дублиране на ключовете и да получим валиден treap.
--- сложност: O(lgn) очаквана (и най-често), O(n) в най-лошия случай
-merge :: (Eq a, Ord a) => Tree a -> Tree a -> Tree a
-merge Empty tr = tr
-merge tr Empty = tr
+-- Merging two treaps requires the maximum value in the left treap
+-- be smaller than the minimum value in the right treap. This is done
+-- by adding a dummy value, which adopts the two treaps, and than sinking
+-- this dummy value to a leaf and cutting it. For a dummy value we select
+-- the root of one of the treaps - it is completely arbitrary.
+-- Complexity: O(lgn) expected (and most often), O(n) worst-case
+merge :: (Eq a, Ord a) => Tree a -> Tree a -> Maybe (Tree a)
+merge Empty tr = Just tr
+merge tr Empty = Just tr
 merge tr1@(Node v _ _ _) tr2
-    | leftmax >= rightmin = error "Unmergeable treaps!"
-    | otherwise           = rebalance True $ Node v 2.0 tr1 tr2 --(!)
-  where leftmax  = getExtreme True tr1
-        rightmin = getExtreme False tr2
+    | leftmax >= rightmin = Nothing
+    | otherwise           = Just $ rebalance True $ Node v 2.0 tr1 tr2 --(!)
+  where leftmax  = getMax tr1
+        rightmin = getMin tr2
 
--- getExtreme False взима най-малкия елемент в даден Treap;
--- getExtreme True взима най-големия.
-getExtreme :: Bool -> Tree a -> a
-getExtreme False (Node v _ Empty _) = v
-getExtreme False (Node _ _ left _)  = getExtreme False left
-getExtreme True (Node v _ _ Empty) = v
-getExtreme True (Node _ _ _ right) = getExtreme True right
-
--- Разцепване на даден treap на два treap-а така, че в единия да са всички
--- ключове, по-малки от даден ключ х, а в другия да са всички по-големи от x.
--- Тук вкарваме елемента x с минимален приоритет така, че след балансиране
--- той да се озове в корена. Тогава (тъй като е двоично наредено дърво)
--- всички елементи, по-малки от него, са в лявото поддърво, а всички по-големи в дясното.
--- Ако x присъства в дървото преди разцепване, то след това той не присъства
--- в нито едно от двете.
--- сложност: O(lgn) очаквана (и най-често), O(n) в най-лошия случай
+-- Splitting a treap in two, such that one of them contains all values
+-- smaller than a given value x, and the other one all the bigger values.
+-- We insert x with priority, smaller than that of every other node,
+-- so that after rebalancing it is located at the root. From the BST
+-- invariant we then have our two resulting treaps as the two subtrees.
+-- If x is contained before splitting, it will not be in any of the returned treaps.
+-- Complexity: O(lgn) expected (and most often), O(n) worst-case
 split :: (Eq a, Ord a) => a -> Tree a -> (Tree a, Tree a)
 split x tr = let (Node _ _ left right) = insert x (-1.0) tr in (left, right)
 
--- Височина на даден treap
--- сложност: O(n)
+-- Treap height
+-- Complexity: O(n)
 height :: Tree a -> Int
 height Empty = 0
 height (Node _ _ left right) = 1 + max (height left) (height right)
 
--- Брой елементи в даден treap
--- сложност: O(n)
--- Може да се направи в константно време ако всеки treap носи със себе си 
--- своя размер така, както "носи" и генератора си. Тогава обаче всеки insert/remove
--- ще трябва да връща наредена двойка от новия treap и неговия размер.
+-- Value count
+-- Complexity: O(n)
+-- May run in O(1) if every treap carries the value count like its RNG,
+-- but every insert/remove will need to return the new size along with the new tree.
 size :: Tree a -> Int
 size Empty = 0
 size (Node _ _ left right) = 1 + (size left) + (size right)
 
--- Списък от елементите в даден treap, подредени в сортиран ред.
+-- All contained values in a sorted list.
 -- "toList t1 ++ toList t2 == (toList $ merge t1 t2)"
--- е изпълнено винаги, когато сливането е позволено, докато
+-- holds true iff merging is allowed, whereas
 -- "let (l,r) = split x t in toList l ++ toList r == toList t"
--- е изпълнено само когато елементът x не е присъствал предварително в t.
--- сложност: O(n)
+-- is true only when x was not present in t beforehand.
+-- Complexity: O(n)
 toList :: Tree a -> [a]
 toList Empty = []
 toList (Node val _ left right) = toList left ++ [val] ++ toList right
