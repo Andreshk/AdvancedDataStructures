@@ -13,30 +13,30 @@ class cartesian_tree
         node(int _val) : value{ _val }, left{ invalidIdx }, right{ invalidIdx } {}
     };
 
-    // Since this is a static tree during construction we only add nodes,
-    // we can store them in consecutive memory and keep indices in this
-    // vector instead of pointers to nodes. This is why the nodes themselves
-    // contain size_t instead of node*. invalidIdx corresponds to the null pointer.
-    // Of course, we also shouldn't forget which node is the root node.
+    // Since this is a static tree and we only add nodes during its construction,
+    // we can store the nodes in continuous memory and keep indices to this
+    // array instead of pointers to nodes. There are the size_t's the nodes contain,
+    // instead of pointers to nodes. The constant invalidIdx corresponds to the null
+    // pointer. Of course, we also shouldn't forget which node is the root node.
     std::vector<node> nodes;
-    size_t root;
+    size_t rootIdx;
 public:
     // O(n) construction
-    cartesian_tree(const std::vector<int>& values)
+    cartesian_tree(const std::vector<int>& values) : nodes{}, rootIdx{ invalidIdx }
     {
         // Stupid, but necessary check
         if (values.empty())
             return;
         nodes.reserve(values.size());
-        // We maintain the "right spine" of the tree,
-        // i.e. the nodes visited starting from the root and traveling right.
+        // We maintain the "right spine" of the tree, i.e. the nodes
+        // visited by starting from the root and only traveling right.
         // This vector contains the indices of these nodes in the nodes vector.
         std::vector<size_t> rightSpine;
-        // Of course, in the beginning there's only the root node,
-        // which is the only node in the right spine.
+        // In the beginning there's only the root node,
+        // which is also the only node in the right spine.
         nodes.emplace_back(values[0]);
-        root = 0;
-        rightSpine.push_back(root);
+        rootIdx = 0;
+        rightSpine.push_back(rootIdx);
         // From then on, every node is pushed "to the right", meaning
         // all other nodes are to the left of it - either "down left" or "up left" in the tree.
         for (size_t i = 1; i < values.size(); ++i)
@@ -53,27 +53,27 @@ public:
                 rightSpine.push_back(newIdx);
                 continue;
             }
-            // Find where to split the spine to insert the new node
+            // Find where to split the spine in order to insert the new node
             while (!rightSpine.empty() && nodes[rightSpine.back()].value >= curr)
                 rightSpine.pop_back();
-            // If there are no nodes left in the spine, this means the new node
+            // If there are no nodes left in the spine, then the new node
             // should be the root (it is currently the smallest value in the tree)
             if (rightSpine.empty())
             {
                 nodes.emplace_back(curr);
                 const size_t newIdx = nodes.size() - 1;
-                nodes.back().left = root;
-                root = newIdx;
-                rightSpine.push_back(root);
+                nodes.back().left = rootIdx;
+                rootIdx = newIdx;
+                rightSpine.push_back(rootIdx);
                 continue;
             }
-            // Otherwise, we insert the node node at the split point of the spine
+            // Otherwise, we insert the new node at the split point of the spine
             // and it becomes the "rightmost" node, inheriting the bottom part of
             // the old spine as its left subtree.
             rightmostIdx = rightSpine.back();
             nodes.emplace_back(curr);
             const size_t newIdx = nodes.size() - 1;
-            // These indices correspond to the "pointer" redirections for the nodes
+            // These correspond to the "pointer" redirections for the nodes
             nodes[newIdx].left = nodes[rightmostIdx].right;
             nodes[rightmostIdx].right = newIdx;
             // Should be noted that the newly inserted node always ends up
@@ -94,12 +94,14 @@ public:
         // of nodes waiting to be visited & printed. pad is used for pretty-printing.
         struct frame { size_t idx, pad; };
         std::vector<frame> stack;
-        stack.emplace_back(frame{ root, 0 });
+        stack.emplace_back(frame{ rootIdx, 0 });
         // This print() function is not supposed to be fast,
         // so we can afford some maybe-not-inlined stateful lambdas for code clarity...
         auto printVal = [&](size_t idx) {
-            if (idx == invalidIdx) std::cout << "#";
-            else std::cout << nodes[idx].value;
+            if (idx == invalidIdx) 
+                std::cout << "#";
+            else 
+                std::cout << nodes[idx].value;
         };
         auto stackPush = [&](size_t idx, size_t pad) {
             if (idx != invalidIdx) 
@@ -116,7 +118,7 @@ public:
             for (size_t i = 0; i < pad; ++i) std::cout << ' ';
             std::cout << nd.value << "-> ";
             const size_t leftIdx = nd.left, rightIdx = nd.right;
-            // In order to see more easily the children of a certain node
+            // Print the values in the children nodes
             printVal(leftIdx);
             std::cout << ", ";
             printVal(rightIdx);
