@@ -26,7 +26,7 @@ class pairing_heap
     static void freeNode(const node*) noexcept;
     void copyFrom(const pairing_heap&);
 
-    // Constructing a heap form a root pointer (received, perhaps, from a child node)
+    // Constructing a heap from a root pointer (received, perhaps, from a child node)
     // without knowing the heap's size. Used for making a singleton heap.
     explicit pairing_heap(node* root, size_t count = 0) noexcept
         : root{ root }, count{ count } {}
