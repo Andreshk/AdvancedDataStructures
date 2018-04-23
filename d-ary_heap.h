@@ -10,6 +10,7 @@ class d_heap
 {
     static_assert(D >= 2, "d-ary heaps must have degree D not less than 2!");
     static constexpr bool is_nothrow_comparable = true; // needs fixing!
+    static constexpr bool nothrow_comp_and_swap = std::is_nothrow_swappable_v<T> && is_nothrow_comparable;
 
     std::vector<T> data;
     Compare comp;
@@ -30,8 +31,7 @@ class d_heap
         return res;
     }
 
-    void bubbleUp() noexcept(std::is_nothrow_swappable_v<T>
-                          && is_nothrow_comparable)
+    void bubbleUp() noexcept(nothrow_comp_and_swap)
     {
         using std::swap;
         size_t idx = data.size() - 1;
@@ -44,8 +44,7 @@ class d_heap
             idx = pIdx;
         }
     }
-    void bubbleDown(size_t idx = 0) noexcept(std::is_nothrow_swappable_v<T>
-                                          && is_nothrow_comparable)
+    void bubbleDown(size_t idx = 0) noexcept(nothrow_comp_and_swap)
     {
         using std::swap;
         while (leftmostChildIdx(idx) < data.size()) // is leaf <=> no children
@@ -59,12 +58,12 @@ class d_heap
     }
 
 public:
-    d_heap(const std::vector<T>& _data = std::vector<T>{},
-        const Compare& _comp = Compare{})
-        : data{ _data }, comp{ _comp }
+    d_heap(const std::vector<T>& data = std::vector<T>{},
+        const Compare& comp = Compare{})
+        : data{ data }, comp{ comp }
     {
         // building the heap in linear time: call bubbleDown for all non-leaf indices
-        const size_t n = data.size();
+        const size_t n = size();
         if (n < 2)
             return;
         // finding the index of the first leaf is basically the same
@@ -81,32 +80,29 @@ public:
             bubbleDown(i);
     }
 
-    const T& top() const noexcept { return data.front(); }
-    bool empty() const noexcept { return data.empty(); }
-    size_t size() const noexcept { return data.size(); }
+    const T&   top() const          { return data.front(); }
+    bool     empty() const noexcept { return data.empty(); }
+    size_t    size() const noexcept { return data.size(); }
 
-    void push(const T& val) noexcept(noexcept(emplace(val)))
+    void push(const T& val)
     {
         emplace(val);
     }
-    void push(T&& val) noexcept(noexcept(emplace(std::move(val))))
+    void push(T&& val)
     {
         emplace(std::move(val));
     }
     template<class... Args>
-    void emplace(Args&&... args) noexcept(std::is_nothrow_constructible_v<T, Args&&...>
-                                       && std::is_nothrow_swappable_v<T>
-                                       && is_nothrow_comparable)
+    void emplace(Args&&... args)
     {
         data.emplace_back(std::forward<Args>(args)...);
         bubbleUp();
     }
 
-    void pop() noexcept(std::is_nothrow_swappable_v<T>
-                     && std::is_nothrow_destructible_v<T> // this should almost never be false
-                     && is_nothrow_comparable)
+    void pop()
     {
-        std::swap(data.front(), data.back());
+        using std::swap;
+        swap(data.front(), data.back());
         data.pop_back();
         bubbleDown();
     }
