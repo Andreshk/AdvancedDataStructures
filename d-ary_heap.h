@@ -9,8 +9,11 @@ template<class T, size_t D, class Compare = std::less<T>>
 class d_heap
 {
     static_assert(D >= 2, "d-ary heaps must have degree D not less than 2!");
-    static constexpr bool is_nothrow_comparable = true; // needs fixing!
-    static constexpr bool nothrow_comp_and_swap = std::is_nothrow_swappable_v<T> && is_nothrow_comparable;
+    // Unfortunately false for std::less<T> for trivial types...
+    static constexpr bool is_nothrow_comparable
+        = noexcept(std::declval<Compare>()(std::declval<T>(),std::declval<T>()));
+    static constexpr bool nothrow_comp_and_swap
+        = std::is_nothrow_swappable_v<T> && is_nothrow_comparable;
 
     std::vector<T> data;
     Compare comp;
