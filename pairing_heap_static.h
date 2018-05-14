@@ -1,5 +1,6 @@
 #pragma once
 #include <vector>
+#include <limits>      // std::numeric_limits::max
 #include <cstddef>     // size_t
 #include <algorithm>   // std::swap
 #include <type_traits> // std::is_trivially_destructible_v
@@ -15,6 +16,7 @@ class pairing_heap_static
     static_assert(std::is_trivially_destructible_v<T>,
         "PairingHeap requires the contained type to have a trivial destructor.");
 
+    using vertex = const size_t;
     struct node
     {
         T value;
@@ -41,33 +43,27 @@ class pairing_heap_static
     void merge(node* other) noexcept { root = merge(root, other); }
     // Merges two heaps, "residing" in the nodes vector, and returns a pointer to the new root.
     node* merge(node*, node*) noexcept;
-public:
-    class proxy
-    {
-        friend pairing_heap_static;
-        node* ptr;
-        proxy(node* ptr) : ptr{ ptr } {}
-    public:
-        const T& operator*()  const noexcept { return  ptr->value; }
-        const T* operator->() const noexcept { return &ptr->value; }
-        operator bool() const noexcept { return bool(ptr); }
-        bool operator==(const proxy& other) const noexcept { return (ptr == other.ptr); }
-        bool operator!=(const proxy& other) const noexcept { return (ptr != other.ptr); }
-    };
 
-    // Reserves space for given maximal count of nodes on construction
-    // Note: this is the maximum amount of calls to insert(),
-    // regardless of how many extractMin()-s are called inbetween. 
-    pairing_heap_static(size_t capacity) { reset(capacity); }
+    // All insertions are performed sequentially on construction (heap initialization).
+    // This leads to tighter invariants and a couple of optimizations more.
+    void insert(const T&);
+public:
+    // Reserves space for a given count of nodes (vertices) and prepares
+    // the heap for Dijkstra's algorithm by inserting a value of maxDist
+    // for every node except the starting one, which has value zero.
+    // If numVertices == 0, no memory is allocated, but operations
+    // before the next call to reset() may lead to undefined behaviour.
+    // Important postcondition: for every vertex v its value is contained in nodes[v].
+    pairing_heap_static(size_t numVertices, vertex start, const T& zero = T{ 0 }, const T& maxDist = std::numeric_limits<T>::max())
+    {
+        reset(numVertices, start, zero, maxDist);
+    }
 
     // We don't really need these. Not trivial, so cannot be defaulted.
     pairing_heap_static(const pairing_heap_static&) = delete;
     pairing_heap_static& operator=(const pairing_heap_static&) = delete;
     pairing_heap_static(pairing_heap_static&&) = delete;
     pairing_heap_static& operator=(pairing_heap_static&&) = delete;
-
-    // Inserting a value is creating a singleton heap and merging it into the current heap
-    proxy insert(const T&);
 
     // Standard operation; undefined behaviour for empty heaps
     const T& peek() const noexcept { return root->value; }
@@ -76,23 +72,25 @@ public:
     T extractMin();
 
     // Special (!)
-    proxy decreaseKey(proxy, const T&) noexcept;
+    void decreaseKey(vertex, const T&) noexcept;
+
+    T dist(vertex v) noexcept { return nodes[v].value; }
 
     // More standard methods
     size_t size() const noexcept { return count; }
     bool empty() const noexcept { return (size() == 0); }
 
-    // Free all memory (!) and reinitialize as an empty heap with a new capacity.
-    void reset(size_t);
+    // Free all memory (!) and reinitialize for an updated number of vertices.
+    // See the comment for the ctor.
+    void reset(size_t numVertices, vertex start, const T& zero = T{ 0 }, const T& maxDist = std::numeric_limits<T>::max());
 };
 
 template<class T>
 auto pairing_heap_static<T>::merge(node* root1, node* root2) noexcept -> node*
 {
-    // Precondition: root1 may only be null if it is the root
-    // of *this (i.e. *this is empty). root2 can never be null.
-    if (!root1)
-        return root2;
+    // Since reset() takes care of heap initialization by manually inserting
+    // the first node, we can be sure that at this point both root1 and
+    // root2 point to non-empty heaps - saving a couple of runtime checks.
     // For simplicity, let root1 be the node that "adopts" the other node
     if (root2->value < root1->value)
         std::swap(root1, root2);
@@ -108,15 +106,14 @@ auto pairing_heap_static<T>::merge(node* root1, node* root2) noexcept -> node*
 }
 
 template<class T>
-auto pairing_heap_static<T>::insert(const T& val) -> proxy
+void pairing_heap_static<T>::insert(const T& val)
 {
-    // Undefined behaviour if the node count, promised on construction, is surpassed.
-    if (nodes.size() == nodes.capacity()) { return { nullptr }; }
+    // Only called a predetermined amount of times by reset()
+    // => no need to check whether the allocated node space is full.
     // Simple: make a new heap and merge it
     node* newNode = &nodes.emplace_back(val);
     merge(newNode);
     ++count;
-    return { newNode };
 }
 
 template<class T>
@@ -154,18 +151,17 @@ T pairing_heap_static<T>::extractMin()
 }
 
 template<class T>
-auto pairing_heap_static<T>::decreaseKey(proxy pr, const T& newKey) noexcept -> proxy
+void pairing_heap_static<T>::decreaseKey(vertex v, const T& newKey) noexcept
 {
-    // If the proxy does not point to a node in this heap -> undefined behaviour(!)
-    // In case of invalid input
-    if (!(newKey < *pr))
-        return pr;
+    node* const location = &nodes[v];
+    // In case of invalid input, simply do nothing
+    if (!(newKey < location->value))
+        return;
     // Update the value
-    node* location = pr.ptr;
     location->value = newKey;
     // If the value is at the root (<=> no predecessor), nothing to change
     if (location == root)
-        return pr;
+        return;
     // Tell its left sibling/parent it has a new right sibling/left child
     if (location == location->predecessor->rightSibling)
         location->predecessor->rightSibling = location->rightSibling;
@@ -178,15 +174,28 @@ auto pairing_heap_static<T>::decreaseKey(proxy pr, const T& newKey) noexcept -> 
     location->rightSibling = location->predecessor = nullptr;
     // ...and merge it with the current heap
     merge(location);
-    // A good practice is to return the same iterator (a.k.a. proxy)
-    return pr;
 }
 
 template<class T>
-void pairing_heap_static<T>::reset(size_t newCap)
+void pairing_heap_static<T>::reset(size_t numVertices, vertex start, const T& zero, const T& maxWeight)
 {
     nodes.clear();
-    nodes.reserve(newCap);
-    root = nullptr;
-    count = 0;
+    if (numVertices == 0) {
+        root = nullptr;
+        count = 0;
+        return;
+    }
+    nodes.reserve(numVertices);
+    root = &nodes.emplace_back(start == 0 ? zero : maxWeight);
+    count = 1;
+    // Insert a new node for every vertex, preserving the ordering: first for the
+    // vertices < start, then for the starting vertex, and finally for those > start
+    for (vertex i = 1; i < start; ++i) {
+        insert(maxWeight);
+    }
+    if (start != 0)
+        insert(zero);
+    for (vertex i = start + 1; i < numVertices; ++i) {
+        insert(maxWeight);
+    }
 }
