@@ -49,14 +49,14 @@ class pairing_heap_static
     void insert(const T&);
 public:
     // Reserves space for a given count of nodes (vertices) and prepares
-    // the heap for Dijkstra's algorithm by inserting a value of maxDist
+    // the heap for Dijkstra's algorithm by inserting a value of infinity
     // for every node except the starting one, which has value zero.
     // If numVertices == 0, no memory is allocated, but operations
     // before the next call to reset() may lead to undefined behaviour.
     // Important postcondition: for every vertex v its value is contained in nodes[v].
-    pairing_heap_static(size_t numVertices, vertex start, const T& zero = T{ 0 }, const T& maxDist = std::numeric_limits<T>::max())
+    pairing_heap_static(size_t numVertices, vertex start, const T& zero = T{ 0 }, const T& infinity = std::numeric_limits<T>::max())
     {
-        reset(numVertices, start, zero, maxDist);
+        reset(numVertices, start, zero, infinity);
     }
 
     // We don't really need these. Not trivial, so cannot be defaulted.
@@ -74,15 +74,13 @@ public:
     // Special (!)
     void decreaseKey(vertex, const T&) noexcept;
 
-    T dist(vertex v) noexcept { return nodes[v].value; }
-
     // More standard methods
     size_t size() const noexcept { return count; }
     bool empty() const noexcept { return (size() == 0); }
 
     // Free all memory (!) and reinitialize for an updated number of vertices.
     // See the comment for the ctor.
-    void reset(size_t numVertices, vertex start, const T& zero = T{ 0 }, const T& maxDist = std::numeric_limits<T>::max());
+    void reset(size_t numVertices, vertex start, const T& zero = T{ 0 }, const T& infinity = std::numeric_limits<T>::max());
 };
 
 template<class T>
@@ -113,7 +111,6 @@ void pairing_heap_static<T>::insert(const T& val)
     // Simple: make a new heap and merge it
     node* newNode = &nodes.emplace_back(val);
     merge(newNode);
-    ++count;
 }
 
 template<class T>
@@ -153,6 +150,7 @@ T pairing_heap_static<T>::extractMin()
 template<class T>
 void pairing_heap_static<T>::decreaseKey(vertex v, const T& newKey) noexcept
 {
+    // Undefined behaviour if the vertex has already been removed
     node* const location = &nodes[v];
     // In case of invalid input, simply do nothing
     if (!(newKey < location->value))
@@ -177,25 +175,22 @@ void pairing_heap_static<T>::decreaseKey(vertex v, const T& newKey) noexcept
 }
 
 template<class T>
-void pairing_heap_static<T>::reset(size_t numVertices, vertex start, const T& zero, const T& maxWeight)
+void pairing_heap_static<T>::reset(size_t numVertices, vertex start, const T& zero, const T& infinity)
 {
     nodes.clear();
+    count = numVertices;
     if (numVertices == 0) {
         root = nullptr;
-        count = 0;
         return;
     }
     nodes.reserve(numVertices);
-    root = &nodes.emplace_back(start == 0 ? zero : maxWeight);
-    count = 1;
     // Insert a new node for every vertex, preserving the ordering: first for the
     // vertices < start, then for the starting vertex, and finally for those > start
-    for (vertex i = 1; i < start; ++i) {
-        insert(maxWeight);
+    for (vertex i = 0; i < start; ++i) {
+        insert(infinity);
     }
-    if (start != 0)
-        insert(zero);
+    insert(zero);
     for (vertex i = start + 1; i < numVertices; ++i) {
-        insert(maxWeight);
+        insert(infinity);
     }
 }
