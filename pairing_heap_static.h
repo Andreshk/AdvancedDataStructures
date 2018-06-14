@@ -4,6 +4,7 @@
 #include <cstddef>     // size_t
 #include <algorithm>   // std::swap
 #include <type_traits> // std::is_trivially_destructible_v
+#include <utility>     // std::pair, std::distance
 
 // On construction allocates continuous space for a predetermined number
 // of nodes, and then all node pointers point to some node in this space.
@@ -16,7 +17,7 @@ class pairing_heap_static
     static_assert(std::is_trivially_destructible_v<T>,
         "PairingHeap requires the contained type to have a trivial destructor.");
 
-    using vertex = const size_t;
+    using vertex = size_t;
     struct node
     {
         T value;
@@ -25,7 +26,7 @@ class pairing_heap_static
         node* predecessor; // parent or left sibling
         node(const T& val) noexcept
             : value{ val }, leftChild{ nullptr }
-            , rightSibling{ nullptr }, predecessor{ nullptr } {}
+            , rightSibling{ nullptr }, predecessor{ nullptr } {};
     };
 
     // The "arena" of all nodes for this heap. This vector contains
@@ -54,7 +55,7 @@ public:
     // If numVertices == 0, no memory is allocated, but operations
     // before the next call to reset() may lead to undefined behaviour.
     // Important postcondition: for every vertex v its value is contained in nodes[v].
-    pairing_heap_static(size_t numVertices, vertex start, const T& zero = T{ 0 }, const T& infinity = std::numeric_limits<T>::max())
+    pairing_heap_static(const size_t numVertices, const vertex start, const T& zero = T{ 0 }, const T& infinity = std::numeric_limits<T>::max())
     {
         reset(numVertices, start, zero, infinity);
     }
@@ -69,7 +70,7 @@ public:
     const T& peek() const noexcept { return root->value; }
 
     // The most complex operation: removing the root and merging all of its children
-    T extractMin();
+    std::pair<T, vertex> extractMin();
 
     // Special (!)
     void decreaseKey(vertex, const T&) noexcept;
@@ -80,7 +81,7 @@ public:
 
     // Free all memory (!) and reinitialize for an updated number of vertices.
     // See the comment for the ctor.
-    void reset(size_t numVertices, vertex start, const T& zero = T{ 0 }, const T& infinity = std::numeric_limits<T>::max());
+    void reset(const size_t numVertices, const vertex start, const T& zero = T{ 0 }, const T& infinity = std::numeric_limits<T>::max());
 };
 
 template<class T>
@@ -114,10 +115,10 @@ void pairing_heap_static<T>::insert(const T& val)
 }
 
 template<class T>
-T pairing_heap_static<T>::extractMin()
+auto pairing_heap_static<T>::extractMin() -> std::pair<T, vertex>
 {
     // Saving the root's value & leftChild before "freeing" the node
-    const T result = peek();
+    const std::pair<T, vertex> result{ peek(), std::distance(&nodes[0], root) };
     node* nextChild = root->leftChild;
     // The node is detached from the heap, but not deallocated
     root->leftChild = root->rightSibling = nullptr;
@@ -148,7 +149,7 @@ T pairing_heap_static<T>::extractMin()
 }
 
 template<class T>
-void pairing_heap_static<T>::decreaseKey(vertex v, const T& newKey) noexcept
+void pairing_heap_static<T>::decreaseKey(const vertex v, const T& newKey) noexcept
 {
     // Undefined behaviour if the vertex has already been removed
     node* const location = &nodes[v];
@@ -175,7 +176,7 @@ void pairing_heap_static<T>::decreaseKey(vertex v, const T& newKey) noexcept
 }
 
 template<class T>
-void pairing_heap_static<T>::reset(size_t numVertices, vertex start, const T& zero, const T& infinity)
+void pairing_heap_static<T>::reset(const size_t numVertices, const vertex start, const T& zero, const T& infinity)
 {
     nodes.clear();
     count = numVertices;
@@ -184,9 +185,11 @@ void pairing_heap_static<T>::reset(size_t numVertices, vertex start, const T& ze
         return;
     }
     nodes.reserve(numVertices);
+    // The first insert must be done manually in roder for the invariant in merge() to hold.
+    root = &nodes.emplace_back(start == 0 ? zero : infinity);
     // Insert a new node for every vertex, preserving the ordering: first for the
     // vertices < start, then for the starting vertex, and finally for those > start
-    for (vertex i = 0; i < start; ++i) {
+    for (vertex i = 1; i < start; ++i) {
         insert(infinity);
     }
     insert(zero);
