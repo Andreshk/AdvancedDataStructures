@@ -1,5 +1,5 @@
 # AdvancedDataStructures
-A collection of exotic &amp; advanced data structures in C++ and Haskell. Also contains small code fragments that don't belong to separate repos, but are worth sharing.
+A collection of exotic &amp; advanced data structures in C++ and Haskell.
 
 * **Binary heap (static)**: A modification to the classic data structure, supporting `decreaseKey` and optimized specifically for Prim's and Dijkstra's algorithms: the total number of values is predetermined and no values are added/removed after initialization. Uses two "pointers" per node. Time complexities are O(lgn) for `extractMin` and `decreaseKey` and O(n) for construction/initialization (a trivial operation).
 * **Cartesian tree**: a _static_ binary tree with min-heap properties, constructed from a given array of values. Here static means that after construction no insertion/deletion operations may be performed, only lookups & queries. What's special here is the **O(n)** on-line construction algorithm, which maintains the "right spine" of the tree at every iteration, using it to achieve amortized O(1) insertion time per element. Other uses will be added later.
