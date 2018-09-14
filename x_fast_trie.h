@@ -8,7 +8,9 @@
 #include <type_traits>   // std::is_unsigned
 #include <unordered_map> // will be replaced with our no-collision hashing
 
-template<typename value_t = uint64_t>
+// The helper mathematical & bitwise-operation functions can be found at the bottom of this file.
+
+template <typename value_t = uint64_t>
 class x_fast_trie {
     static_assert(std::is_unsigned<value_t>::value,
         "Willard's algorithm works only on unsigned integral types!");
@@ -36,7 +38,6 @@ class x_fast_trie {
     // to its left- and rightmost leaf in the temporary trie.
     static constexpr idx_t root_idx = 0;
     static constexpr idx_t invalid_idx = ~idx_t{ 0 };
-    static constexpr idx_t max_radix_nodes = invalid_idx;
     static constexpr idx_t max_size = invalid_idx / 2;
     static bool is_invalid(idx_t idx) { return (idx == invalid_idx); }
     struct node {
@@ -44,71 +45,14 @@ class x_fast_trie {
         node() : children{ invalid_idx,invalid_idx } {};
     };
 
-    std::vector<value_t> values;    // values contained, in sorted order
-    std::vector<hashmap_t> levels;  // trie level hashmaps to pairs of leaf indices
-    const size_t bits; // = ceil(log2(U))
-
-    // Printing & debugging
-    static void print_bits(value_t val, size_t bits) {
-        std::cout << val << '[';
-        for (size_t i = bits - 1; i < bits; --i)
-            std::cout << ((val >> i) & 1 ? '1' : '0');
-        std::cout << ']';
-    }
-    // There are other ways to flip bits, hopefully this one isn't too slow
-    uint8_t reverse_bits(uint8_t val) {
-        val = ((val >> 1) & 0x55ui8) | ((val & 0x55ui8) << 1);
-        val = ((val >> 2) & 0x33ui8) | ((val & 0x33ui8) << 2);
-        val =  (val >> 4) | (val << 4);
-        return (val >> (8 - bits));
-    }
-    uint16_t reverse_bits(uint16_t val) {
-        val = ((val >> 1) & 0x5555ui16) | ((val & 0x5555ui16) << 1);
-        val = ((val >> 2) & 0x3333ui16) | ((val & 0x3333ui16) << 2);
-        val = ((val >> 4) & 0x0F0Fui16) | ((val & 0x0F0Fui16) << 4);
-        val =  (val >> 8) | (val << 8);
-        return (val >> (16 - bits));
-    }
-    uint32_t reverse_bits(uint32_t val) {
-        val = ((val >> 1) & 0x5555'5555ui32) | ((val & 0x5555'5555ui32) << 1);
-        val = ((val >> 2) & 0x3333'3333ui32) | ((val & 0x3333'3333ui32) << 2);
-        val = ((val >> 4) & 0x0F0F'0F0Fui32) | ((val & 0x0F0F'0F0Fui32) << 4);
-        val = ((val >> 8) & 0x00FF'00FFui32) | ((val & 0x00FF'00FFui32) << 8);
-        val =  (val >> 16) | (val << 16);
-        return (val >> (32 - bits));
-    }
-    uint64_t reverse_bits(uint64_t val) {
-        val = ((val >> 1) & 0x5555'5555'5555'5555ui64) | ((val & 0x5555'5555'5555'5555ui64) << 1);
-        val = ((val >> 2) & 0x3333'3333'3333'3333ui64) | ((val & 0x3333'3333'3333'3333ui64) << 2);
-        val = ((val >> 4) & 0x0F0F'0F0F'0F0F'0F0Fui64) | ((val & 0x0F0F'0F0F'0F0F'0F0Fui64) << 4);
-        val = ((val >> 8) & 0x00FF'00FF'00FF'00FFui64) | ((val & 0x00FF'00FF'00FF'00FFui64) << 8);
-        val = ((val >> 16) & 0x0000'FFFF'0000'FFFFui64) | ((val & 0x0000'FFFF'0000'FFFFui64) << 16);
-        val =  (val >> 32) | (val << 32);
-        return (val >> (64 - bits));
-    }
-    // These two beg for vectorization
-    static size_t bit_length(value_t val) {
-        size_t result = 0;
-        while (val) {
-            val >>= 1;
-            ++result;
-        }
-        return result;
-    }
-    static size_t max_bit_length(const std::vector<value_t>& values) {
-        size_t result = 1;
-        for (auto x : values) {
-            size_t curr = bit_length(x);
-            if (result < curr)
-                result = curr;
-        }
-        return result;
-    }
+    std::vector<value_t> values;   // the values contained, in sorted order
+    std::vector<hashmap_t> levels; // for every trie level, a hashmap to pairs of leaf indices
+    const size_t bits;             // = ceil(log2(U)), where U is the maximum in values
 
     // Insert a value in the temporary trie, represented by the nodes array
     void trie_insert(std::vector<node>& nodes, const value_t val) {
         // Reverse the "significant" bits for easier access
-        value_t rval = reverse_bits(val);
+        value_t rval = reverse_bits(val, bits);
         size_t rest_bits = bits;
         idx_t curr_idx = 0;
         // Navigate common prefix in tree
@@ -184,7 +128,7 @@ class x_fast_trie {
         // Now do some more magic to save a couple of branches...
         static const int index[] = { -1,1 };
         // For starters, we check where this node has a left or a right
-        // child node (we now there is exactly one) by another hashmap lookup
+        // child node (we know there is exactly one) by another hashmap lookup
         if (exists_in(levels[l + 1], 2 * xsplit + succ))
             return { values[arr[!succ]] };
         else
@@ -192,13 +136,12 @@ class x_fast_trie {
     }
 public:
     // Here be magic
-    x_fast_trie(const std::vector<value_t>& _values)
-        : bits{ max_bit_length(_values) } {
+    x_fast_trie(const std::vector<value_t>& _values) : bits{ max_bit_length(_values) } {
         // Very, very unlikely...
-        if (_values.empty())
+        if (_values.empty() || _values.size() >= max_size)
             return;
         const size_t n = _values.size();
-        // The final node count is expected to be around 2N. The trie is
+        // The final node count is expected to be around 2n. The trie is
         // actually a temporary structure, needed only at initialization!
         std::vector<node> nodes{ 1,node{} }; // there's always a root node
         nodes.reserve(2 * n);
@@ -280,3 +223,66 @@ public:
         }
     }
 };
+
+namespace { // Utilities
+    // Printing & debugging
+    template <typename value_t>
+    void print_bits(value_t val, size_t bits) {
+        std::cout << val << '[';
+        for (size_t i = bits - 1; i < bits; --i)
+            std::cout << ((val >> i) & 1 ? '1' : '0');
+        std::cout << ']';
+    }
+    // These two beg for vectorization
+    template <typename value_t>
+    size_t bit_length(value_t val) {
+        size_t result = 0;
+        while (val) {
+            val >>= 1;
+            ++result;
+        }
+        return result;
+    }
+    template <typename value_t>
+    size_t max_bit_length(const std::vector<value_t>& values) {
+        size_t result = 1;
+        for (auto x : values) {
+            size_t curr = bit_length(x);
+            if (result < curr)
+                result = curr;
+        }
+        return result;
+    }
+
+    // There are other ways to flip bits, hopefully this one isn't too slow
+    uint8_t reverse_bits(uint8_t val, size_t bits) {
+        val = ((val >> 1) & 0x55ui8) | ((val & 0x55ui8) << 1);
+        val = ((val >> 2) & 0x33ui8) | ((val & 0x33ui8) << 2);
+        val = (val >> 4) | (val << 4);
+        return (val >> (8 - bits));
+    }
+    uint16_t reverse_bits(uint16_t val, size_t bits) {
+        val = ((val >> 1) & 0x5555ui16) | ((val & 0x5555ui16) << 1);
+        val = ((val >> 2) & 0x3333ui16) | ((val & 0x3333ui16) << 2);
+        val = ((val >> 4) & 0x0F0Fui16) | ((val & 0x0F0Fui16) << 4);
+        val = (val >> 8) | (val << 8);
+        return (val >> (16 - bits));
+    }
+    uint32_t reverse_bits(uint32_t val, size_t bits) {
+        val = ((val >> 1) & 0x5555'5555ui32) | ((val & 0x5555'5555ui32) << 1);
+        val = ((val >> 2) & 0x3333'3333ui32) | ((val & 0x3333'3333ui32) << 2);
+        val = ((val >> 4) & 0x0F0F'0F0Fui32) | ((val & 0x0F0F'0F0Fui32) << 4);
+        val = ((val >> 8) & 0x00FF'00FFui32) | ((val & 0x00FF'00FFui32) << 8);
+        val = (val >> 16) | (val << 16);
+        return (val >> (32 - bits));
+    }
+    uint64_t reverse_bits(uint64_t val, size_t bits) {
+        val = ((val >> 1) & 0x5555'5555'5555'5555ui64) | ((val & 0x5555'5555'5555'5555ui64) << 1);
+        val = ((val >> 2) & 0x3333'3333'3333'3333ui64) | ((val & 0x3333'3333'3333'3333ui64) << 2);
+        val = ((val >> 4) & 0x0F0F'0F0F'0F0F'0F0Fui64) | ((val & 0x0F0F'0F0F'0F0F'0F0Fui64) << 4);
+        val = ((val >> 8) & 0x00FF'00FF'00FF'00FFui64) | ((val & 0x00FF'00FF'00FF'00FFui64) << 8);
+        val = ((val >> 16) & 0x0000'FFFF'0000'FFFFui64) | ((val & 0x0000'FFFF'0000'FFFFui64) << 16);
+        val = (val >> 32) | (val << 32);
+        return (val >> (64 - bits));
+    }
+}
