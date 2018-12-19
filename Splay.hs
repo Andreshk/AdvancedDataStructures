@@ -25,4 +25,10 @@ test = Node 5 (Node 4 (Node 2 (Node 1 Empty Empty)
                       Empty)
               (Node 6 Empty Empty)
 
-main = print $ show test
+main = do
+  putStrLn "> test"
+  print test
+  putStrLn "> lookup 3 test"
+  print $ lookup 3 test
+  putStrLn "> lookup 7 test"
+  print $ lookup 7 test
