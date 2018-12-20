@@ -27,10 +27,8 @@ lookup :: Ord a => a -> Splay a -> Maybe (Splay a)
 lookup _ Empty = Nothing
 lookup x t@(Node y l r)
   | x == y = Just t
-  | x < y && empty l = Nothing
-  | x < y = (\l1 -> rotateRight (Node y l1 r)) <$> lookup x l
-  | x > y && empty r = Nothing
-  | x > y = (\r1 -> rotateLeft  (Node y l r1)) <$> lookup x r
+  | x < y  = (\l1 -> rotateRight (Node y l1 r)) <$> lookup x l
+  | x > y  = (\r1 -> rotateLeft  (Node y l r1)) <$> lookup x r
 
 fromList :: Ord a => [a] -> Splay a
 fromList = foldr insert Empty
