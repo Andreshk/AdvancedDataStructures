@@ -3,13 +3,13 @@ import Prelude hiding (lookup)
 
 data Splay a = Empty | Node a (Splay a) (Splay a) deriving Show
 
--- Standard tree rotations
-rotateLeft, rotateRight :: Splay a -> Splay a
-rotateLeft  (Node x a (Node y b c)) = (Node y (Node x a b) c)
-rotateRight (Node y (Node x a b) c) = (Node x a (Node y b c))
-
 -- A list of directions forms a path from the root to another node.
 data Direction = L | R deriving Eq
+
+-- Standard tree rotations
+rotate :: Direction -> Splay a -> Splay a
+rotate L (Node x a (Node y b c)) = (Node y (Node x a b) c)
+rotate R (Node y (Node x a b) c) = (Node x a (Node y b c))
 
 -- Two-pass, bottom-up approach: insert the new value, returning
 -- both the new tree and the path to the inserted value, and then
@@ -40,14 +40,14 @@ lookup x t = splay t <$> pathTo x t
 splay :: Splay a -> [Direction] -> Splay a
 splay t [] = t -- The value is already at the root
 -- Zig
-splay t [L] = rotateRight t
-splay t [R] = rotateLeft  t
+splay t [L] = rotate R t
+splay t [R] = rotate L t
 -- Zig-zig
-splay (Node q (Node p x c) d) (L:L:path) = rotateRight $ rotateRight (Node q (Node p (splay x path) c) d)
-splay (Node p a (Node q b x)) (R:R:path) = rotateLeft  $ rotateLeft  (Node p a (Node q b (splay x path)))
+splay (Node q (Node p x c) d) (L:L:path) = rotate R $ rotate R (Node q (Node p (splay x path) c) d)
+splay (Node p a (Node q b x)) (R:R:path) = rotate L $ rotate L (Node p a (Node q b (splay x path)))
 -- Zig-zag
-splay (Node q (Node p a x) d) (L:R:path) = rotateRight (Node q (rotateLeft  $ Node p a (splay x path)) d)
-splay (Node p a (Node q x d)) (R:L:path) = rotateLeft  (Node p a (rotateRight $ Node q (splay x path) d))
+splay (Node q (Node p a x) d) (L:R:path) = rotate R (Node q (rotate L $ Node p a (splay x path)) d)
+splay (Node p a (Node q x d)) (R:L:path) = rotate L (Node p a (rotate R $ Node q (splay x path) d))
 
 -- Build a tree from the set (!) of values in a list
 fromList :: Ord a => [a] -> Splay a
@@ -64,8 +64,8 @@ insert' :: Ord a => a -> Splay a -> Splay a
 insert' x Empty = Node x Empty Empty
 insert' x t@(Node val l r)
   | x == val = t
-  | x < val  = rotateRight (Node val (insert' x l) r)
-  | x > val  = rotateLeft  (Node val l (insert' x r))
+  | x < val  = rotate R (Node val (insert' x l) r)
+  | x > val  = rotate L (Node val l (insert' x r))
 
 -- Naive implementation, does not splay optimally (!)
 -- Invariant: if `lookup x _` returns a tree, its root is x
@@ -73,8 +73,8 @@ lookup' :: Ord a => a -> Splay a -> Maybe (Splay a)
 lookup' _ Empty = Nothing
 lookup' x t@(Node val l r)
   | x == val = Just t
-  | x < val  = (\l1 -> rotateRight (Node val l1 r)) <$> lookup' x l
-  | x > val  = (\r1 -> rotateLeft  (Node val l r1)) <$> lookup' x r
+  | x < val  = (\l1 -> rotate R (Node val l1 r)) <$> lookup' x l
+  | x > val  = (\r1 -> rotate L (Node val l r1)) <$> lookup' x r
 
 -- Demo:
 main = do
