@@ -1,5 +1,6 @@
-module Splay (insert,lookup,fromList,toList) where
+module Splay (insert,lookup,fromList) where
 import Prelude hiding (lookup)
+import Data.Monoid ((<>))
 
 data Splay a = Empty | Node a (Splay a) (Splay a) deriving Show
 
@@ -14,6 +15,7 @@ rotate R (Node y (Node x a b) c) = (Node x a (Node y b c))
 -- Two-pass, bottom-up approach: insert the new value, returning
 -- both the new tree and the path to the inserted value, and then
 -- move this value to the root using the path.
+-- Important: duplicate values are not allowed (!)
 insert :: Ord a => a -> Splay a -> Splay a
 insert x t = let (path, t') = pathToInserted x t in splay t' path
   where pathToInserted :: Ord a => a -> Splay a -> ([Direction], Splay a)
@@ -53,10 +55,10 @@ splay (Node p a (Node q x d)) (R:L:path) = rotate L (Node p a (rotate R $ Node q
 fromList :: Ord a => [a] -> Splay a
 fromList = foldr insert Empty
 
--- Make a sorted list from all the contained elements
-toList :: Splay a -> [a]
-toList Empty = []
-toList (Node val l r) = toList l ++ [val] ++ toList r
+-- You can fold over the values in a tree, or use Data.Foldable.toList
+instance Foldable Splay where
+  foldMap f Empty = mempty
+  foldMap f (Node val l r) = foldMap f l <> f val <> foldMap f r
 
 -- Naive implementation, does not splay optimally (!)
 -- Invariant: `insert' x _` returns a tree with x in its root
