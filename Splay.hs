@@ -1,4 +1,4 @@
-module Splay (insert,lookup,fromList) where
+module Splay (Splay,insert,lookup,fromList) where
 import Prelude hiding (lookup)
 import Data.Monoid ((<>))
 

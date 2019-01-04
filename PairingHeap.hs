@@ -1,5 +1,5 @@
 module PairingHeap
-( insert, (<>), merge, getMin,
+( PairingHeap, insert, (<>), merge, getMin,
   extractMin, empty, size,
   fromList, toList, sort
 ) where

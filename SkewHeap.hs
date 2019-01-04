@@ -1,5 +1,5 @@
 module SkewHeap
-( insert, (<>), merge, getMin,
+( SkewHeap, insert, (<>), merge, getMin,
   extractMin, empty, size,
   fromList, toList, sort
 ) where
