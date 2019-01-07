@@ -18,7 +18,7 @@ instance {-# OVERLAPPABLE #-} Integral a => Wv a where
 
 instance Show a => Show (WaveletTree a) where
   show w = show' 0 w
-    where show' _ Dummy = ""
+    where show' pad Dummy    = replicate pad ' ' ++ "#"
           show' pad (Leaf x) = replicate pad ' ' ++ show x
           show' pad (Node bitmap left right) = replicate pad ' '
                                             ++ showBin bitmap
