@@ -9,11 +9,11 @@ import qualified Data.BitVector as BV (foldl)
 
 data WaveletTree a = Dummy | Leaf a | Node BitVector (WaveletTree a) (WaveletTree a)
 
-class Wv a where
+class (Enum a, Ord a) => Wv a where
   midpoint :: a -> a -> a
 instance Wv Char where
   midpoint x y = chr $ (ord x + ord y) `div` 2
-instance {-# OVERLAPPABLE #-} Integral a => Wv a where
+instance {-# OVERLAPPABLE #-} (Integral a, Enum a, Ord a) => Wv a where
   midpoint x y = (x + y) `div` 2
 
 instance Show a => Show (WaveletTree a) where
@@ -25,7 +25,7 @@ instance Show a => Show (WaveletTree a) where
                                             ++ "\n" ++ show' (pad+2) left
                                             ++ "\n" ++ show' (pad+2) right
 
-wavelet :: (Wv a, Ord a, Enum a) => [a] -> WaveletTree a
+wavelet :: Wv a => [a] -> WaveletTree a
 wavelet xs = wavelet' (minimum xs) (maximum xs) xs
   where wavelet' from to xs
           | null xs    = Dummy -- dummy node, will never be reached during indexing
@@ -44,5 +44,5 @@ wavelet xs = wavelet' (minimum xs) (maximum xs) xs
         rank i = BV.foldl (\c b -> if b then c+1 else c) 0 $ most i bitmap
 
 -- Should always return true (!)
-check :: (Wv a, Ord a, Enum a) => [a] -> Bool
+check :: Wv a => [a] -> Bool
 check xs = xs == map (wavelet xs !) [0..length xs - 1]
