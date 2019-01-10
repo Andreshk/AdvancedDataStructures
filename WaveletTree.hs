@@ -25,6 +25,7 @@ instance Show a => Show (WaveletTree a) where
                                             ++ "\n" ++ show' (pad+2) left
                                             ++ "\n" ++ show' (pad+2) right
 
+-- to-do: do not build a bitmap if one of the children will be a dummy (null ys || null zs)
 wavelet :: Wv a => [a] -> WaveletTree a
 wavelet xs = wavelet' (minimum xs) (maximum xs) xs
   where wavelet' from to xs
@@ -37,6 +38,8 @@ wavelet xs = wavelet' (minimum xs) (maximum xs) xs
 
 (!) :: Integral ix => WaveletTree a -> ix -> a
 (Leaf x) ! _ = x
+(Node _ left Dummy) ! i = left ! i    -- A dummy node corresponds to an empty subset of
+(Node _ Dummy right) ! i = right ! i  -- characters => go directly to the other branch.
 (Node bitmap left right) ! i
   | bitmap !. i = right ! (rank i)
   | otherwise   = left ! (i - rank i)
