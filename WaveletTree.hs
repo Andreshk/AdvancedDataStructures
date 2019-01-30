@@ -63,20 +63,19 @@ instance Sequence BV where -- BitVector is actually a synonym
               | otherwise       = select' i (curr+1)
 
 wavelet :: Wv a => [a] -> WaveletTree a
-wavelet xs = WaveletTree t (a,b)
+wavelet xs = WaveletTree (wavelet' (a,b) xs) (a,b)
   where a = minimum xs
         b = maximum xs
-        t = wavelet' (a,b) xs
-          where wavelet' range@(a,b) xs
-                  | a == b    = Leaf a
-                  | null ys   = Node nil Dummy right   {- Nodes with a single child will be skipped -}
-                  | null zs   = Node nil left Dummy    {- during traversal => do not build a bitmap.-}
-                  | otherwise = Node bitmap left right
-                  where mid = midpoint a b
-                        (ys,zs) = partition (<=mid) xs
-                        bitmap = fromBits $ map (>mid) xs -- will not be evaluated if null ys || null zs
-                        left  = wavelet' (goL range) ys
-                        right = wavelet' (goR range) zs
+        wavelet' range@(a,b) xs
+          | a == b    = Leaf a
+          | null ys   = Node nil Dummy right   {- Nodes with a single child will be skipped -}
+          | null zs   = Node nil left Dummy    {- during traversal => do not build a bitmap.-}
+          | otherwise = Node bitmap left right
+          where mid = midpoint a b
+                (ys,zs) = partition (<=mid) xs
+                bitmap = fromBits $ map (>mid) xs -- will not be evaluated if null ys || null zs
+                left  = wavelet' (goL range) ys
+                right = wavelet' (goR range) zs
 
 instance Wv a => Sequence (WaveletTree a) where
   type ElemType (WaveletTree a) = a
@@ -110,5 +109,5 @@ test = do
       (n,w) = (length str, wavelet str)
       str'  = (w!)<$>[0..n-1]
   print str'; print $ str==str' -- this check should always hold (!)
-  mapM_ print (map (\c -> map (\i->rank c i w) [1..n]) (sort.nub$str))
+  mapM_ (print.(\c -> map (\i->rank c i w) [1..n])) (sort.nub$str)
   print $ let c = str!!0 in map (\i->select c i w) [1..length$filter(==c)str]
