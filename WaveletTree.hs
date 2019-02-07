@@ -1,33 +1,42 @@
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ConstrainedClassMethods #-}
 
-module WaveletTree where
-import Data.Char (chr,ord)
-import Data.List (partition,sort,nub) -- sort,nub needed for testing only
-import Data.BitVector (BitVector,BV,showBin,nil,(!.),most,fromBits) -- requires package bv
+module WaveletTree (WaveletTree,wavelet,(!),rank,select,test) where
+import Data.List (partition,sort,nub)
+import Data.Function (on)
+import Data.BitVector (BitVector,BV,(#),nil,fromBool,showBin,(!.),most,fromBits) -- requires package bv
 import qualified Data.BitVector as BV (foldl)
 
-data Tree a = Dummy | Leaf a | Node BitVector (Tree a) (Tree a)
-data WaveletTree a = WaveletTree (Tree a) (a,a)
+{------ Huffman encoding section ------}
+data HTree a = HLeaf a | (HTree a) :^: (HTree a)
+data HPair a = HPair { tree :: HTree a, weight :: Int }
+instance Eq  (HPair a) where (==) = (==) `on` weight
+instance Ord (HPair a) where (<=) = (<=) `on` weight
 
-class (Enum a, Ord a) => Wv a where
-  midpoint :: a -> a -> a
-instance Wv Char where
-  midpoint x y = chr $ (ord x + ord y) `div` 2
-instance {-# OVERLAPPABLE #-} (Integral a, Enum a, Ord a) => Wv a where
-  midpoint x y = (x + y) `div` 2
+huffman :: Eq a => [a] -> HTree a
+huffman str = tree . head . mergeTrees $ histogram
+  where histogram = sort [ HPair (HLeaf c) (length $ filter (==c) str) | c<-nub str ]
+        mergeTrees [p] = [p]
+        mergeTrees ((HPair t1 w1):(HPair t2 w2):ps) = mergeTrees $ insert (HPair (t1:^:t2) (w1+w2)) ps
+          where insert p ps = let (a,b) = span (<p) ps in a++(p:b)
 
-goL, goR :: Wv a => (a,a) -> (a,a) -- placeholder names, pls rename
-goL (a,b) = (a,midpoint a b)
-goR (a,b) = (succ $ midpoint a b, b)
+codes :: HTree a -> [(a,BitVector)]
+codes (HLeaf c) = []
+codes t = codes' t nil
+  where codes' (HLeaf c) code = [(c,code)]
+        codes' (t1:^:t2) code = codes' t1 (code # fromBool False) ++ codes' t2 (code # fromBool True)
+
+codeOf :: Eq a => a -> [(a,BitVector)] -> BitVector
+codeOf c = snd . head . filter ((==c).fst)
+
+{------ Wavelet Tree ------}
+data WTree a = Leaf a | Node BitVector (WTree a) (WTree a)
+data WaveletTree a = WaveletTree (WTree a) [(a,BitVector)]
 
 instance Show a => Show (WaveletTree a) where
   show (WaveletTree t _) = show' 0 t
-    where show' pad Dummy    = replicate pad ' ' ++ "#"
-          show' pad (Leaf x) = replicate pad ' ' ++ show x
+    where show' pad (Leaf x) = replicate pad ' ' ++ show x
           show' pad (Node bitmap left right) = replicate pad ' '
                                             ++ showBin bitmap
                                             ++ "\n" ++ show' (pad+2) left
@@ -62,52 +71,47 @@ instance Sequence BV where -- BitVector is actually a synonym
               | bv !. curr == b = if i == 1 then curr else select' (i-1) (curr+1)
               | otherwise       = select' i (curr+1)
 
-wavelet :: Wv a => [a] -> WaveletTree a
-wavelet xs = WaveletTree (wavelet' (a,b) xs) (a,b)
-  where a = minimum xs
-        b = maximum xs
-        wavelet' range@(a,b) xs
-          | a == b    = Leaf a
-          | null ys   = Node nil Dummy right   {- Nodes with a single child will be skipped -}
-          | null zs   = Node nil left Dummy    {- during traversal => do not build a bitmap.-}
-          | otherwise = Node bitmap left right
-          where mid = midpoint a b
-                (ys,zs) = partition (<=mid) xs
-                bitmap = fromBits $ map (>mid) xs -- will not be evaluated if null ys || null zs
-                left  = wavelet' (goL range) ys
-                right = wavelet' (goR range) zs
+wavelet :: Eq a => [a] -> WaveletTree a
+wavelet xs
+  | null huffCodes = WaveletTree (Leaf $ xs!!0) []
+  | otherwise      = WaveletTree (wavelet' huffTree 0 xs) huffCodes
+  where huffTree = huffman xs
+        huffCodes = codes huffTree
+        wavelet' (HLeaf x) _ _= Leaf x
+        wavelet' (hleft :^: hright) d xs = Node bitmap left right
+          where (ys,zs) = partition (not.(!.d).(`codeOf` huffCodes)) xs
+                bitmap = fromBits $ map ((!.d).(`codeOf` huffCodes)) xs
+                left  = wavelet' hleft  (d+1) ys
+                right = wavelet' hright (d+1) zs
 
-instance Wv a => Sequence (WaveletTree a) where
+instance Sequence (WaveletTree a) where
   type ElemType (WaveletTree a) = a
   (WaveletTree t _) ! i = t ! i
     where (Leaf x) ! _ = x
-          (Node _ left Dummy) ! i = left ! i    {- A dummy node corresponds to an empty subset of -}
-          (Node _ Dummy right) ! i = right ! i  {- characters => go directly to the other branch. -}
           (Node bitmap left right) ! i
             | bitmap !. i = right ! (rank True i bitmap)
             | otherwise   = left ! (rank False i bitmap)
 
-  rank c i (WaveletTree w range) = rank' c i w range
-    where rank' _ i (Leaf _) _ = i -- all unused arguments should contain the same symbol
-          rank' c i (Node _ left Dummy) range  = rank' c i left (goL range)
-          rank' c i (Node _ Dummy right) range = rank' c i right (goR range)
-          rank' c i (Node bitmap left right) range@(a,b)
-            | c <= (midpoint a b) = rank' c (rank False i bitmap) left (goL range)
-            | otherwise           = rank' c (rank True i bitmap) right (goR range)
+  rank c i (WaveletTree w codes) = rank' i w 0
+    where code = codeOf c codes
+          rank' i (Leaf _) _ = i -- the leaf should now contain the symbol c
+          rank' i (Node bitmap left right) d
+            | code !. d = rank' (rank True i bitmap) right (d+1)
+            | otherwise = rank' (rank False i bitmap) left (d+1)
 
-  select c i (WaveletTree w range) = select' c (i-1) w range
-    where select' _ i (Leaf _) _ = i -- all unused arguments should contain the same symbol
-          select' c i (Node _ left Dummy) range  = select' c i left (goL range)
-          select' c i (Node _ Dummy right) range = select' c i right (goR range)
-          select' c i (Node bitmap left right) range@(a,b)
-            | c <= (midpoint a b) = let j = select' c i left (goL range)  in select False (j+1) bitmap
-            | otherwise           = let j = select' c i right (goR range) in select True  (j+1) bitmap
+  select c i (WaveletTree w codes) = select' (i-1) w 0
+    where code = codeOf c codes
+          select' i (Leaf _) _ = i -- the leaf should now contain the symbol c
+          select' i (Node bitmap left right) d
+            | code !. d = let j = select' i right (d+1) in select True  (j+1) bitmap
+            | otherwise = let j = select' i left (d+1)  in select False (j+1) bitmap
 
 test :: IO ()
 test = do
   let str   = "abracadabra"
       (n,w) = (length str, wavelet str)
       str'  = (w!)<$>[0..n-1]
+      chars = sort . nub $ str
   print str'; print $ str==str' -- this check should always hold (!)
-  mapM_ (print.(\c -> map (\i->rank c i w) [1..n])) (sort.nub$str)
-  print $ let c = str!!0 in map (\i->select c i w) [1..length$filter(==c)str]
+  mapM_ (print.(\c -> map (\i->rank c i w) [1..n])) chars
+  mapM_ (print.(\c -> map (\i->select c i w) [1..length$filter(==c)str])) chars
