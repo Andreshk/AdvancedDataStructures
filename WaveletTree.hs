@@ -2,11 +2,41 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ConstrainedClassMethods #-}
 
-module WaveletTree (WaveletTree,wavelet,(!),rank,select,test) where
+module WaveletTree (WaveletTree,Sequence,wavelet,(!),rank,select,test) where
 import Data.List (partition,sort,nub)
 import Data.Function (on)
 import Data.BitVector (BitVector,BV,(#),nil,fromBool,showBin,(!.),most,fromBits) -- requires package bv
 import qualified Data.BitVector as BV (foldl)
+
+{------ Sequence class ------}
+{- A sequence should support the following three operations:
+    Access: the element at a given position in the sequence
+    Rank: The number of occurences of a given element among the first i in the sequence
+    Select: The position of the i-th occurence of a given element in the sequence -}
+class Sequence c where
+  type ElemType c :: *
+  (!) :: c -> Int -> ElemType c
+  rank, select :: Eq (ElemType c) => ElemType c -> Int -> c -> Int
+
+-- Example implementation of the sequence operations for lists
+instance Sequence [a] where
+  type ElemType [a] = a
+  (!) = (!!)
+  rank c i lst = length . filter (==c) $ take i lst
+  select c i (x:xs)
+    | c == x    = if i == 1 then 0 else 1 + select c (i-1) xs
+    | otherwise = 1 + select c i xs
+
+instance Sequence BV where -- BitVector is actually a synonym
+  type ElemType BV = Bool
+  (!) = (!.)
+  rank False i bv = i - (rank True i bv)
+  rank True 0 _ = 0
+  rank True i bitmap = BV.foldl (\c b -> if b then c+1 else c) 0 $ most i bitmap
+  select b i bv = select' i 0
+    where select' i curr
+            | bv !. curr == b = if i == 1 then curr else select' (i-1) (curr+1)
+            | otherwise       = select' i (curr+1)
 
 {------ Huffman encoding section ------}
 data HTree a = HLeaf a | (HTree a) :^: (HTree a)
@@ -41,35 +71,6 @@ instance Show a => Show (WaveletTree a) where
                                             ++ showBin bitmap
                                             ++ "\n" ++ show' (pad+2) left
                                             ++ "\n" ++ show' (pad+2) right
-
-{- A sequence should support the following three operations:
-    Access: the element at a given position in the sequence
-    Rank: The number of occurences of a given element among the first i in the sequence
-    Select: The position of the i-th occurence of a given element in the sequence -}
-class Sequence c where
-    type ElemType c :: *
-    (!) :: c -> Int -> ElemType c
-    rank, select :: Eq (ElemType c) => ElemType c -> Int -> c -> Int
-
--- Example implementation of the sequence operations for lists
-instance Sequence [a] where
-  type ElemType [a] = a
-  (!) = (!!)
-  rank c i lst = length . filter (==c) $ take i lst
-  select c i (x:xs)
-    | c == x    = if i == 1 then 0 else 1 + select c (i-1) xs
-    | otherwise = 1 + select c i xs
-
-instance Sequence BV where -- BitVector is actually a synonym
-    type ElemType BV = Bool
-    (!) = (!.)
-    rank False i bv = i - (rank True i bv)
-    rank True 0 _ = 0
-    rank True i bitmap = BV.foldl (\c b -> if b then c+1 else c) 0 $ most i bitmap
-    select b i bv = select' i 0
-      where select' i curr
-              | bv !. curr == b = if i == 1 then curr else select' (i-1) (curr+1)
-              | otherwise       = select' i (curr+1)
 
 wavelet :: Eq a => [a] -> WaveletTree a
 wavelet xs
