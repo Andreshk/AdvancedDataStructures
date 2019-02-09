@@ -9,7 +9,7 @@ import Data.Function (on)
 import Data.BitVector (BitVector,BV,(#),nil,fromBool,showBin,(!.),most,fromBits) -- requires package bv
 import qualified Data.BitVector as BV (foldl)
 import Data.HashMap.Lazy (HashMap,empty,singleton,union)
-import qualified Data.HashMap.Lazy as HM ((!))
+import qualified Data.HashMap.Lazy as HM ((!),null)
 
 {------ Sequence class ------}
 {- A sequence should support the following three operations:
@@ -58,7 +58,8 @@ codes :: (Eq a, Hashable a) => HTree a -> HashMap a BitVector
 codes (HLeaf c) = empty
 codes t = codes' t nil
   where codes' (HLeaf c) code = singleton c code
-        codes' (t1:^:t2) code = codes' t1 (code # fromBool False) `union` codes' t2 (code # fromBool True)
+        codes' (t1:^:t2) code = codes' t1 (code # fromBool False) `union`
+                                codes' t2 (code # fromBool True)
 
 codeOf :: (Eq a, Hashable a) => a -> HashMap a BitVector -> BitVector
 codeOf = flip $ (HM.!) -- to-do: maybe remove this & use lookup for safety
@@ -77,8 +78,8 @@ instance Show a => Show (WaveletTree a) where
 
 wavelet :: (Eq a, Hashable a) => [a] -> WaveletTree a
 wavelet xs
-  | null huffCodes = WaveletTree (Leaf $ xs!!0) empty
-  | otherwise      = WaveletTree (wavelet' huffTree 0 xs) huffCodes
+  | HM.null huffCodes = WaveletTree (Leaf $ xs!!0) empty
+  | otherwise         = WaveletTree (wavelet' huffTree 0 xs) huffCodes
   where huffTree = huffman xs
         huffCodes = codes huffTree
         wavelet' (HLeaf x) _ _= Leaf x
