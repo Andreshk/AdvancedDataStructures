@@ -4,9 +4,12 @@
 
 module WaveletTree (WaveletTree,Sequence,wavelet,(!),rank,select,test) where
 import Data.List (partition,sort,nub)
+import Data.Hashable (Hashable) -- this & HashMap require package unordered-containers
 import Data.Function (on)
 import Data.BitVector (BitVector,BV,(#),nil,fromBool,showBin,(!.),most,fromBits) -- requires package bv
 import qualified Data.BitVector as BV (foldl)
+import Data.HashMap.Lazy (HashMap,empty,singleton,union)
+import qualified Data.HashMap.Lazy as HM ((!))
 
 {------ Sequence class ------}
 {- A sequence should support the following three operations:
@@ -51,18 +54,18 @@ huffman str = tree . head . mergeTrees $ histogram
         mergeTrees ((HPair t1 w1):(HPair t2 w2):ps) = mergeTrees $ insert (HPair (t1:^:t2) (w1+w2)) ps
           where insert p ps = let (a,b) = span (<p) ps in a++(p:b)
 
-codes :: HTree a -> [(a,BitVector)]
-codes (HLeaf c) = []
+codes :: (Eq a, Hashable a) => HTree a -> HashMap a BitVector
+codes (HLeaf c) = empty
 codes t = codes' t nil
-  where codes' (HLeaf c) code = [(c,code)]
-        codes' (t1:^:t2) code = codes' t1 (code # fromBool False) ++ codes' t2 (code # fromBool True)
+  where codes' (HLeaf c) code = singleton c code
+        codes' (t1:^:t2) code = codes' t1 (code # fromBool False) `union` codes' t2 (code # fromBool True)
 
-codeOf :: Eq a => a -> [(a,BitVector)] -> BitVector
-codeOf c = snd . head . filter ((==c).fst)
+codeOf :: (Eq a, Hashable a) => a -> HashMap a BitVector -> BitVector
+codeOf = flip $ (HM.!) -- to-do: maybe remove this & use lookup for safety
 
 {------ Wavelet Tree ------}
 data WTree a = Leaf a | Node BitVector (WTree a) (WTree a)
-data WaveletTree a = WaveletTree (WTree a) [(a,BitVector)]
+data WaveletTree a = WaveletTree (WTree a) (HashMap a BitVector)
 
 instance Show a => Show (WaveletTree a) where
   show (WaveletTree t _) = show' 0 t
@@ -72,9 +75,9 @@ instance Show a => Show (WaveletTree a) where
                                             ++ "\n" ++ show' (pad+2) left
                                             ++ "\n" ++ show' (pad+2) right
 
-wavelet :: Eq a => [a] -> WaveletTree a
+wavelet :: (Eq a, Hashable a) => [a] -> WaveletTree a
 wavelet xs
-  | null huffCodes = WaveletTree (Leaf $ xs!!0) []
+  | null huffCodes = WaveletTree (Leaf $ xs!!0) empty
   | otherwise      = WaveletTree (wavelet' huffTree 0 xs) huffCodes
   where huffTree = huffman xs
         huffCodes = codes huffTree
@@ -85,7 +88,7 @@ wavelet xs
                 left  = wavelet' hleft  (d+1) ys
                 right = wavelet' hright (d+1) zs
 
-instance Sequence (WaveletTree a) where
+instance Hashable a => Sequence (WaveletTree a) where
   type ElemType (WaveletTree a) = a
   (WaveletTree t _) ! i = t ! i
     where (Leaf x) ! _ = x
