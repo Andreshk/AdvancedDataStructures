@@ -1,15 +1,14 @@
 #pragma once
 #include <vector>
 #include <limits>      // std::numeric_limits::max
-#include <cstddef>      // size_t
-#include <algorithm>    // std::min, std::swap
-#include <functional>   // std::less
-#include <type_traits>  // std::is_nothrow_swappable
-#include <utility>      // std::pair
+#include <cstddef>     // size_t
+#include <algorithm>   // std::min, std::swap
+#include <functional>  // std::less
+#include <type_traits> // std::is_nothrow_swappable
+#include <utility>     // std::pair
 
 template<class T, class Compare = std::less<T>>
-class binary_heap_static
-{
+class BinaryHeapStatic {
     // Unfortunately false for std::less<T> for trivial types...
     static constexpr bool nothrow_comp
         = noexcept(std::declval<Compare>()(std::declval<const T&>(), std::declval<const T&>()));
@@ -33,7 +32,6 @@ class binary_heap_static
 
     // Swap two values in the heap, keeping the two-way referencing
     void swapNodes(const size_t u, const size_t v);
-
 public:
     // Reserves space for a given count of nodes (vertices) and prepares
     // the heap for Dijkstra's algorithm by inserting a value of infinity
@@ -42,7 +40,8 @@ public:
     // before the next call to reset() may lead to undefined behaviour.
     // Important postcondition: for every vertex v its value is data[indices[v]].
     // Requirement: comp(zero, infinity) == true && comp(zero, _) == true && comp(infinity, _) == false
-    binary_heap_static(const size_t numVertices,
+    BinaryHeapStatic(
+        const size_t numVertices,
         vertex start,
         const T& zero = T{ 0 },
         const T& infinity = std::numeric_limits<T>::max(),
@@ -66,7 +65,8 @@ public:
 
     // Free all memory (!) and reinitialize for an updated number of vertices.
     // See the comment for the ctor.
-    void reset(const size_t numVertices,
+    void reset(
+        const size_t numVertices,
         vertex start,
         const T& zero = T{ 0 },
         const T& infinity = std::numeric_limits<T>::max(),
@@ -74,45 +74,44 @@ public:
 };
 
 template<class T, class Compare>
-size_t binary_heap_static<T, Compare>::minChildIdx(size_t idx) const noexcept(nothrow_comp)
-{
+size_t BinaryHeapStatic<T, Compare>::minChildIdx(size_t idx) const noexcept(nothrow_comp) {
     // Invariant: idx has at least one child
     const size_t left = leftChildIdx(idx);
     const size_t right = rightChildIdx(idx);
-    if (right >= size() || comp(data[left], data[right]))
+    if (right >= size() || comp(data[left], data[right])) {
         return left;
-    else
+    } else {
         return right;
+    }
 }
 
 template<class T, class Compare>
-void binary_heap_static<T, Compare>::bubbleUp(size_t idx) noexcept(nothrow_comp_and_swap)
-{
+void BinaryHeapStatic<T, Compare>::bubbleUp(size_t idx) noexcept(nothrow_comp_and_swap) {
     while (idx) {
         size_t pIdx = parentIdx(idx);
-        if (!comp(data[idx], data[pIdx]))
+        if (!comp(data[idx], data[pIdx])) {
             return;
+        }
         swapNodes(idx, pIdx);
         idx = pIdx;
     }
 }
 
 template<class T, class Compare>
-void binary_heap_static<T, Compare>::bubbleDown(size_t idx) noexcept(nothrow_comp_and_swap)
-{
+void BinaryHeapStatic<T, Compare>::bubbleDown(size_t idx) noexcept(nothrow_comp_and_swap) {
     while (leftChildIdx(idx) < size()) { // is leaf <=> no children
         size_t minIdx = minChildIdx(idx);
         if (comp(data[minIdx], data[idx])) {
             swapNodes(idx, minIdx);
             idx = minIdx;
-        } else
+        } else {
             return;
+        }
     }
 }
 
 template<class T, class Compare>
-void binary_heap_static<T, Compare>::swapNodes(const size_t idx1, const size_t idx2)
-{
+void BinaryHeapStatic<T, Compare>::swapNodes(const size_t idx1, const size_t idx2) {
     using std::swap;
     swap(data[idx1].value, data[idx2].value);
     swap(data[idx1].v, data[idx2].v);
@@ -120,8 +119,7 @@ void binary_heap_static<T, Compare>::swapNodes(const size_t idx1, const size_t i
 }
 
 template<class T, class Compare>
-auto binary_heap_static<T, Compare>::extractMin() -> std::pair<T, vertex>
-{
+auto BinaryHeapStatic<T, Compare>::extractMin() -> std::pair<T, vertex> {
     // Push the root node to the end of the array
     swapNodes(0, --count);
     // shrinking may be slow (implementation-specific) => just don't do it
@@ -131,23 +129,24 @@ auto binary_heap_static<T, Compare>::extractMin() -> std::pair<T, vertex>
 }
 
 template<class T, class Compare>
-void binary_heap_static<T, Compare>::decreaseKey(const vertex v, const T& newKey) noexcept(nothrow_comp)
-{
-    if (!comp(newKey, data[indices[v]].value))
+void BinaryHeapStatic<T, Compare>::decreaseKey(const vertex v, const T& newKey) noexcept(nothrow_comp) {
+    if (!comp(newKey, data[indices[v]].value)) {
         return;
+    }
     bubbleUp(indices[v]);
 }
 
 template<class T, class Compare>
-void binary_heap_static<T, Compare>::reset(const size_t numVertices,
+void BinaryHeapStatic<T, Compare>::reset(const size_t numVertices,
     vertex start, const T& zero, const T& infinity, const Compare& comp)
 {
     this->comp = comp;
     count = numVertices;
     data.clear();
     indices.clear();
-    if (numVertices == 0)
+    if (numVertices == 0) {
         return;
+    }
     // Initialize the vector as if all vertices have value = infinity
     data.assign(numVertices, pair{ infinity,0 });
     indices.assign(numVertices, 0);
@@ -157,8 +156,9 @@ void binary_heap_static<T, Compare>::reset(const size_t numVertices,
     }
     // Manually "place" the starting vertex at the top of the heap
     data[start].value = zero;
-    if (numVertices < 2)
+    if (numVertices < 2) {
         return;
+    }
     using std::swap;
     swap(data[start], data[0]);
     swap(indices[start], indices[0]);
