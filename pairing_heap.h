@@ -36,6 +36,7 @@ public:
 
         explicit proxy(node* ptr) : ptr{ ptr } {}
     public:
+        proxy() : ptr{ nullptr } {}
         const T& operator*()  const { return  ptr->value; }
         const T* operator->() const { return &ptr->value; }
         operator bool() const { return bool(ptr); }
@@ -43,10 +44,12 @@ public:
         bool operator!=(const proxy& other) const { return ptr != other.ptr; }
     };
 
-    // Standard big 6
-    PairingHeap(const Compare& cmp = Compare{}) : PairingHeap{ nullptr, 0, cmp } {}
+    // Standard big 6.
+    // Move ctor _must_ be noexcept is order for std::vector<PairingHeap>::push_back()
+    // to work properly (move heaps, not copy them) during extractMin().
+    PairingHeap(const Compare& cmp = Compare{}) noexcept : PairingHeap{ nullptr, 0, cmp } {}
     PairingHeap(const PairingHeap& other) : PairingHeap{} { copyFrom(other); }
-    PairingHeap(PairingHeap&& other) : PairingHeap{} { swap(other); }
+    PairingHeap(PairingHeap&& other) noexcept : PairingHeap{} { swap(other); }
     PairingHeap& operator=(const PairingHeap&);
     PairingHeap& operator=(PairingHeap&&);
     ~PairingHeap() { clear(); }
@@ -73,7 +76,7 @@ public:
     void clear();
 
     // For convenience
-    void swap(PairingHeap&);
+    void swap(PairingHeap&) noexcept;
 };
 
 template<class T, class Compare>
@@ -154,7 +157,8 @@ template<class T, class Compare>
 auto PairingHeap<T, Compare>::insert(const T& _val) -> proxy {
     // Simple: make a new heap and merge it
     node* res = new node(_val);
-    merge(PairingHeap{ res, 1 });
+    PairingHeap singleton{ res, 1 };
+    merge(singleton);
     return proxy{ res };
 }
 
@@ -222,7 +226,8 @@ auto PairingHeap<T, Compare>::decreaseKey(proxy pr, const T& newKey) -> proxy {
     const size_t oldCount = count;
     // Make a singleton heap with the decreased value at the root
     // and merge it with the current heap
-    merge(PairingHeap{ location });
+    PairingHeap singleton{ location };
+    merge(singleton);
     // Restore the heap size
     count = oldCount;
     // A good practice is to return the same iterator (a.k.a. proxy)
@@ -237,7 +242,7 @@ void PairingHeap<T, Compare>::clear() {
 }
 
 template<class T, class Compare>
-void PairingHeap<T, Compare>::swap(PairingHeap& other) {
+void PairingHeap<T, Compare>::swap(PairingHeap& other) noexcept {
     std::swap(root, other.root);
     std::swap(count, other.count);
 }
