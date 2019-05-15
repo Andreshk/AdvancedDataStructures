@@ -23,6 +23,7 @@ class PairingHeap {
     // Helper copying/deleting functions
     static node* copyNode(const node*, node*);
     static void freeNode(const node*);
+    static node* mergeNode(node*, node*, Compare&);
     void copyFrom(const PairingHeap&);
 
     // Constructing a heap form a root pointer (received, perhaps, from a child node)
@@ -68,7 +69,7 @@ public:
     T extractMin();
 
     // Special (!)
-    proxy decreaseKey(proxy, const T&);
+    bool decreaseKey(proxy, const T&);
 
     // More standard methods
     size_t size() const { return count; }
@@ -80,11 +81,11 @@ public:
 };
 
 template<class T, class Compare>
-auto PairingHeap<T, Compare>::copyNode(const node* ptr, node* _pred) -> node* {
+auto PairingHeap<T, Compare>::copyNode(const node* ptr, node* pred) -> node* {
     if (!ptr) {
         return nullptr;
     }
-    node* tmp = new node(ptr->value, _pred);
+    node* tmp = new node(ptr->value, pred);
     tmp->leftChild = copyNode(ptr->leftChild, tmp);
     tmp->rightSibling = copyNode(ptr->rightSibling, tmp);
     return tmp;
@@ -97,6 +98,25 @@ void PairingHeap<T, Compare>::freeNode(const node* ptr) {
         freeNode(ptr->rightSibling);
         delete ptr;
     }
+}
+
+template<class T, class Compare>
+auto PairingHeap<T, Compare>::mergeNode(node* root1, node* root2, Compare& cmp) -> node* {
+    // For simplicity, let root1 be the heap that "adopts" the other
+    if (cmp(root2->value, root1->value)) {
+        std::swap(root1, root2);
+    }
+    // Cache the old left child
+    root2->rightSibling = root1->leftChild;
+    // The left child of the root will be changed, so the old one has to know
+    if (root1->leftChild) {
+        root1->leftChild->predecessor = root2;
+    }
+    // Finally, link the two root nodes
+    root1->leftChild = root2;
+    root2->predecessor = root1;
+    // Return the root of the merged heap
+    return root1;
 }
 
 template<class T, class Compare>
@@ -128,87 +148,72 @@ template<class T, class Compare>
 void PairingHeap<T, Compare>::merge(PairingHeap& other) {
     // Some edge cases are handled way earlier
     if (this == &other || other.empty()) {
-        return;
-    }
-    if (empty()) {
+        // nothing to do
+    } else if (empty()) {
         swap(other);
-        return;
+    } else {
+        root = mergeNode(root, other.root, cmp);
+        count += other.count;
+        other.root  = nullptr;
+        other.count = 0;
     }
-    // For simplicity, let *this be the heap that "adopts" the other
-    if (cmp(other.root->value, root->value)) {
-        swap(other);
-    }
-    // Cache the old left child
-    other.root->rightSibling = root->leftChild;
-    // The left child of the root will be changed, so the old one has to know
-    if (root->leftChild) {
-        root->leftChild->predecessor = other.root;
-    }
-    // Finally, link the two root nodes
-    root->leftChild = other.root;
-    other.root->predecessor = root;
-    count += other.count;
-    // Reset the other heap
-    other.root = nullptr;
-    other.count = 0;
 }
 
 template<class T, class Compare>
 auto PairingHeap<T, Compare>::insert(const T& _val) -> proxy {
     // Simple: make a new heap and merge it
     node* res = new node(_val);
-    PairingHeap singleton{ res, 1 };
-    merge(singleton);
+    root = (count == 0 ? res : mergeNode(root, res, cmp));
+    ++count;
     return proxy{ res };
 }
 
 template<class T, class Compare>
 T PairingHeap<T, Compare>::extractMin() {
-    // Saving the root's value, leftChild, and total count before freeing the node
+    // Saving the root's value & leftChild before freeing the node
     const T result = peek();
     node* nextChild = root->leftChild;
-    const size_t oldCount = count;
     delete root;
     root = nullptr;
     // The old root's children (also heaps)
-    std::vector<PairingHeap> children;
+    std::vector<node*> children;
     while (nextChild) {
         node* curr = nextChild;
         nextChild = nextChild->rightSibling;
         curr->rightSibling = curr->predecessor = nullptr;
-        children.push_back(PairingHeap{ curr });
+        children.push_back(curr);
     }
     const size_t n = children.size();
     // First merge the children in pairs - that's where the name comes from
     if (n > 1) {
         for (size_t i = 0; i <= (n - 2 - (n % 2)); i += 2)
-            children[i].merge(children[i + 1]);
+            children[i] = mergeNode(children[i], children[i + 1], cmp);
     }
     // Then merge the resulting heaps from the last to the first
     if (n > 0) {
         for (size_t i = (n - 2 + (n % 2)); i > 0; i -= 2)
-            children[i - 2].merge(children[i]);
+            children[i - 2] = mergeNode(children[i - 2], children[i], cmp);
         // The only heap left in the array is the one 
-        swap(children[0]);
+        root = children[0];
     }
     // Decrease the heap size (lost in the final swap)
-    count = oldCount - 1;
+    --count;
     return result;
 }
 
 template<class T, class Compare>
-auto PairingHeap<T, Compare>::decreaseKey(proxy pr, const T& newKey) -> proxy {
+bool PairingHeap<T, Compare>::decreaseKey(proxy pr, const T& newKey) {
     // If the proxy does not point to a node in this heap -> undefined behaviour(!)
     // In case of invalid input
     if (!cmp(newKey, *pr)) {
-        return pr;
+        return false;
     }
     // Update the value
     node* location = pr.ptr;
     location->value = newKey;
-    // If the value is at the root (<=> no predecessor), nothing to change
+    // If the value is at the root (<=> no predecessor), nothing more to change
     if (location == root) {
-        return pr;
+        return true;
     }
     // Tell its left sibling/parent it has a new right sibling/left child
     if (location == location->predecessor->rightSibling) {
@@ -224,14 +229,10 @@ auto PairingHeap<T, Compare>::decreaseKey(proxy pr, const T& newKey) -> proxy {
     location->rightSibling = location->predecessor = nullptr;
     // Keep the old size
     const size_t oldCount = count;
-    // Make a singleton heap with the decreased value at the root
-    // and merge it with the current heap
-    PairingHeap singleton{ location };
-    merge(singleton);
-    // Restore the heap size
-    count = oldCount;
-    // A good practice is to return the same iterator (a.k.a. proxy)
-    return pr;
+    // Merge back the singleton heap, represented by
+    // the isolated node with the decreased value.
+    root = mergeNode(root, location, cmp);
+    return true;
 }
 
 template<class T, class Compare>
@@ -245,6 +246,7 @@ template<class T, class Compare>
 void PairingHeap<T, Compare>::swap(PairingHeap& other) noexcept {
     std::swap(root, other.root);
     std::swap(count, other.count);
+    std::swap(cmp, other.cmp);
 }
 
 template<class T, class Compare>
