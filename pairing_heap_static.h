@@ -28,8 +28,8 @@ class PairingHeapStatic {
 
     // The "arena" of all nodes for this heap. This vector contains
     // all heap nodes and we say the heap "resides" in the vector.
-    // It will only grow, and extracting values will leave "holes"
-    // inside it. All node pointers can be replaced by indices to this
+    // Its size is set during initialization, and extracting values will leave
+    // "holes" inside it. All node pointers can be replaced by indices to this
     // vector, but keeping pointers is faster & more convenient.
     std::vector<node> nodes;
     // The address of the root node (equal to &nodes[i] for some i)
@@ -68,10 +68,13 @@ public:
     const T& peek() const { return root->value; }
 
     // The most complex operation: removing the root and merging all of its children
-    std::pair<T, vertex> extractMin();
+    std::pair<vertex, T> extractMin();
 
     // Special (!)
-    void decreaseKey(vertex, const T&);
+    bool decreaseKey(vertex, const T&);
+
+    // We can also keep track of the exact vertices currently in the heap
+    bool contains(vertex) const;
 
     // More standard methods
     size_t size() const noexcept { return count; }
@@ -114,12 +117,13 @@ void PairingHeapStatic<T>::insert(const T& val) {
 }
 
 template<class T>
-auto PairingHeapStatic<T>::extractMin() -> std::pair<T, vertex> {
+auto PairingHeapStatic<T>::extractMin() -> std::pair<vertex, T> {
     // Saving the root's value & leftChild before "freeing" the node
-    const std::pair<T, vertex> result{ peek(), std::distance(&nodes[0], root) };
+    const std::pair<vertex, T> result{ std::distance(&nodes[0], root), peek() };
     node* nextChild = root->leftChild;
-    // The node is detached from the heap, but not deallocated
-    root->leftChild = root->rightSibling = nullptr;
+    // The node is detached from the heap, but not deallocated.
+    // Setting its predecessor to nullptr is required for contains() to work.
+    root->predecessor = root->leftChild = root->rightSibling = nullptr;
     // The old root's children (also heaps)
     std::vector<node*> children;
     while (nextChild) {
@@ -146,18 +150,18 @@ auto PairingHeapStatic<T>::extractMin() -> std::pair<T, vertex> {
 }
 
 template<class T>
-void PairingHeapStatic<T>::decreaseKey(const vertex v, const T& newKey) {
+bool PairingHeapStatic<T>::decreaseKey(const vertex v, const T& newKey) {
     // Undefined behaviour if the vertex has already been removed
     node* const location = &nodes[v];
     // In case of invalid input, simply do nothing
     if (!(newKey < location->value)) {
-        return;
+        return false;
     }
     // Update the value
     location->value = newKey;
     // If the value is at the root (<=> no predecessor), nothing to change
     if (location == root) {
-        return;
+        return true;
     }
     // Tell its left sibling/parent it has a new right sibling/left child
     if (location == location->predecessor->rightSibling) {
@@ -173,6 +177,14 @@ void PairingHeapStatic<T>::decreaseKey(const vertex v, const T& newKey) {
     location->rightSibling = location->predecessor = nullptr;
     // ...and merge it with the current heap
     merge(location);
+    return true;
+}
+
+template<class T>
+bool PairingHeapStatic<T>::contains(vertex u) const {
+    // Only the root node has no predecessor, and we explicitly
+    // set each removed node's predecessor to nullptr.
+    return (nodes[u].predecessor != nullptr || root == &nodes[u]);
 }
 
 template<class T>
@@ -191,7 +203,9 @@ void PairingHeapStatic<T>::reset(const size_t numVertices, const vertex start, c
     for (vertex i = 1; i < start; ++i) {
         insert(infinity);
     }
-    insert(zero);
+    if (start != 0) {
+        insert(zero);
+    }
     for (vertex i = start + 1; i < numVertices; ++i) {
         insert(infinity);
     }
