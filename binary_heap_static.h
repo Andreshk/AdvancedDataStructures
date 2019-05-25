@@ -7,7 +7,7 @@
 #include <type_traits> // std::is_nothrow_swappable
 #include <utility>     // std::pair
 
-template<class T, class Compare = std::less<T>>
+template <class T, class Compare = std::less<T>>
 class BinaryHeapStatic {
     // Unfortunately false for std::less<T> for trivial types...
     static constexpr bool nothrow_comp
@@ -54,10 +54,13 @@ public:
     const T& peek() const noexcept { return data[0].value; }
 
     // Also standard
-    std::pair<T, vertex> extractMin();
+    std::pair<vertex, T> extractMin();
 
     // The most complex operation for this type of heap, using the two-way referencing
-    void decreaseKey(const vertex, const T&) noexcept(nothrow_comp);
+    bool decreaseKey(const vertex, const T&) noexcept(nothrow_comp);
+
+    // We can also keep track of the exact vertices currently in the heap
+    bool contains(vertex) const noexcept;
 
     // More standard methods
     size_t size() const noexcept { return count; }
@@ -73,23 +76,23 @@ public:
         const Compare& comp = Compare{});    
 };
 
-template<class T, class Compare>
+template <class T, class Compare>
 size_t BinaryHeapStatic<T, Compare>::minChildIdx(size_t idx) const noexcept(nothrow_comp) {
     // Invariant: idx has at least one child
     const size_t left = leftChildIdx(idx);
     const size_t right = rightChildIdx(idx);
-    if (right >= size() || comp(data[left], data[right])) {
+    if (right >= size() || comp(data[left].value, data[right].value)) {
         return left;
     } else {
         return right;
     }
 }
 
-template<class T, class Compare>
+template <class T, class Compare>
 void BinaryHeapStatic<T, Compare>::bubbleUp(size_t idx) noexcept(nothrow_comp_and_swap) {
     while (idx) {
         size_t pIdx = parentIdx(idx);
-        if (!comp(data[idx], data[pIdx])) {
+        if (!comp(data[idx].value, data[pIdx].value)) {
             return;
         }
         swapNodes(idx, pIdx);
@@ -97,11 +100,11 @@ void BinaryHeapStatic<T, Compare>::bubbleUp(size_t idx) noexcept(nothrow_comp_an
     }
 }
 
-template<class T, class Compare>
+template <class T, class Compare>
 void BinaryHeapStatic<T, Compare>::bubbleDown(size_t idx) noexcept(nothrow_comp_and_swap) {
     while (leftChildIdx(idx) < size()) { // is leaf <=> no children
         size_t minIdx = minChildIdx(idx);
-        if (comp(data[minIdx], data[idx])) {
+        if (comp(data[minIdx].value, data[idx].value)) {
             swapNodes(idx, minIdx);
             idx = minIdx;
         } else {
@@ -110,33 +113,38 @@ void BinaryHeapStatic<T, Compare>::bubbleDown(size_t idx) noexcept(nothrow_comp_
     }
 }
 
-template<class T, class Compare>
+template <class T, class Compare>
 void BinaryHeapStatic<T, Compare>::swapNodes(const size_t idx1, const size_t idx2) {
     using std::swap;
-    swap(data[idx1].value, data[idx2].value);
-    swap(data[idx1].v, data[idx2].v);
-    swap(indices[idx1], indices[idx2]);
+    swap(data[idx1], data[idx2]);
+    swap(indices[data[idx1].v], indices[data[idx2].v]);
 }
 
-template<class T, class Compare>
-auto BinaryHeapStatic<T, Compare>::extractMin() -> std::pair<T, vertex> {
+template <class T, class Compare>
+auto BinaryHeapStatic<T, Compare>::extractMin() -> std::pair<vertex, T> {
     // Push the root node to the end of the array
     swapNodes(0, --count);
-    // shrinking may be slow (implementation-specific) => just don't do it
-    //data.pop_back();
+    // Shrinking the vectors may be slow (implementation-specific) => just don't do it
     bubbleDown(0);
-    return { data[count].value, indices[count] };
+    return { data[count].v, data[count].value };
 }
 
-template<class T, class Compare>
-void BinaryHeapStatic<T, Compare>::decreaseKey(const vertex v, const T& newKey) noexcept(nothrow_comp) {
+template <class T, class Compare>
+bool BinaryHeapStatic<T, Compare>::decreaseKey(const vertex v, const T& newKey) noexcept(nothrow_comp) {
     if (!comp(newKey, data[indices[v]].value)) {
-        return;
+        return false;
     }
+    data[indices[v]].value = newKey;
     bubbleUp(indices[v]);
+    return true;
 }
 
-template<class T, class Compare>
+template <class T, class Compare>
+bool BinaryHeapStatic<T, Compare>::contains(vertex u) const noexcept {
+    return (indices[u] < count);
+}
+
+template <class T, class Compare>
 void BinaryHeapStatic<T, Compare>::reset(const size_t numVertices,
     vertex start, const T& zero, const T& infinity, const Compare& comp)
 {
