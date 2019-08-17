@@ -1,6 +1,6 @@
 #pragma once
 #include <array>
-#include <memory> // std::memset. std::memcpy
+#include <memory> // std::memset, std::memcpy
 #include <atomic>
 #include <cstdint> // size_t
 #include <type_traits> // std::is_trivial_v
@@ -33,7 +33,7 @@
  * are best used in tight loops on vectors that do not share their structure with others.
  * Example usage:
  *   PersistentVector<int> pv1;
- *   const auto pv2 = pv1.push_back(5);
+ *   auto pv2 = pv1.push_back(5);
  *   const auto pv3 = pv2.push_back(123);
  *   make_transient(pv2).set(0,42); // pv2[0] = 42 -> no path copying, may cause pv3[0] == 42
  *   PersistentVector<int> pv4;
@@ -59,7 +59,8 @@ class PersistentVector {
     static const size_t L = getL(numBranches); // Logarithm of the number of values in a leaf
     static const size_t numValuesInLeaf = 1 << L;
     static_assert(B >= 1 && B <= 8);
-    static_assert(numValuesInLeaf >= 2 && "Values too large to fit in the leaf nodes - consider increasing B or using pointers to T.");
+    static_assert(numValuesInLeaf >= 2,
+        "Values too large to fit in the leaf nodes - consider increasing B or using pointers to T.");
 
     struct Node {
         std::atomic<size_t> refCount;
@@ -225,6 +226,13 @@ class PersistentVector {
             vassert(numLeaves > (fullTreeSize(height - 1) / numValuesInLeaf) && "Tree unnecessarily high!");
         }
     }
+    // Helper struct to guarantee invariant checking when exiting the transient methods.
+    struct CheckInvariantsRAII {
+        const PersistentVector& pv;
+        CheckInvariantsRAII(const PersistentVector& pv) : pv{ pv } {}
+        ~CheckInvariantsRAII() { pv.checkInvariants(); }
+    };
+    friend CheckInvariantsRAII;
 
     PersistentVector(Node* root, Node* tail, size_t height, size_t n)
         : root{ root }, tail{ tail }, height{ height }, n{ n }
@@ -328,6 +336,7 @@ public:
     }
     // Transient (modifying) push_back()
     void push_back(const T& val) && {
+        CheckInvariantsRAII check{ *this };
         // See comments for non-transient push_back() - the same invariants are maintained here
         tail->values[n%numValuesInLeaf] = val;
         ++n;
@@ -338,8 +347,6 @@ public:
             root = tail;
             tail = new Node;
             height = 0;
-            checkInvariants();
-            return;
         } else if (treeSize(n - 1) == fullTreeSize(height)) {
             Node* newRoot = new Node;
             newRoot->ptrs[0] = root;
@@ -347,8 +354,6 @@ public:
             root = newRoot;
             tail = new Node;
             ++height;
-            checkInvariants();
-            return;
         } else {
             vassert(height > 0);
             Node* currRoot = root;
@@ -375,8 +380,6 @@ public:
             }
             tail = new Node;
             ++n;
-            checkInvariants();
-            return;
         }
     }
     // Return a new vector, obtained by removing the last value
@@ -412,12 +415,11 @@ public:
     // Transient (modifying) pop_back()
     void pop_back() && {
         vassert(n > 0);
+        CheckInvariantsRAII check{ *this };
         if (n%numValuesInLeaf != 0) {
             // The tail was not empty => reusing the tail node
             // leaves us with literally nothing else to do
             --n;
-            checkInvariants();
-            return;
         } else if (height == 0) {
             // After removing an element, the remaining fit in a single node (the tail) => we'll have an empty tree
             vassert(n == numValuesInLeaf);
@@ -425,8 +427,6 @@ public:
             tail = root;
             root = nullptr;
             --n;
-            checkInvariants();
-            return;
         } else if (n == (fullTreeSize(height - 1) + numValuesInLeaf)) {
             // After removing an element, the remaining can fit in a tree, 1 level shorter
             Node* newRoot = root->ptrs[0]->acquire();
@@ -437,8 +437,6 @@ public:
             tail = newTail;
             --height;
             --n;
-            checkInvariants();
-            return;
         } else {
             // Extract the last leaf from the tree by resetting the pointer to it in its parent's node.
             Node* leafParent = findLeaf(n - 1, 1);
@@ -447,8 +445,6 @@ public:
             tail = ptrToLeaf;
             ptrToLeaf = nullptr;
             --n;
-            checkInvariants();
-            return;
         }
     }
     
