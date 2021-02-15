@@ -3,6 +3,8 @@ module SkewHeap
   extractMin, empty, size,
   fromList, toList, sort
 ) where
+import Prelude hiding ((<>))
+import Data.List (unfoldr)
 
 -- No need for comments - the code is self-documenting.
 -- The basic operations such as insert, merge and extractMin have O(lgn)
@@ -42,17 +44,16 @@ empty :: SkewHeap a -> Bool
 empty Empty = True
 empty _ = False
 
--- unfortunately O(n)
+-- unfortunately O(n), as is length for lists
 size :: Ord a => SkewHeap a -> Int
 size = length . toList
 
+-- The beauty of folding & unfolding
 fromList :: Ord a => [a] -> SkewHeap a
-fromList = foldl (flip insert) Empty
--- fromList = foldr insert Empty
+fromList = foldr insert Empty
 
 toList :: Ord a => SkewHeap a -> [a]
-toList sh = case extractMin sh of Nothing -> []
-                                  Just (val, sh1) -> val : toList sh1
+toList = unfoldr extractMin
 
 sort :: Ord a => [a] -> [a]
 sort = toList . fromList
