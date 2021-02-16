@@ -4,23 +4,24 @@ data CartesianTree a = Empty | Node a (CartesianTree a) (CartesianTree a)
 
 -- Used purely for debugging purposes
 instance Show a => Show (CartesianTree a) where
-    show t = let (res, _, _) = show' t in init $ unlines res
-      where -- Returns the lines of the visualized tree + dimension of the rectangle it fits in.
+    show t = let (res, _, _) = show' t 1 in init $ unlines res
+      where -- n is number of spaces for additional padding between the printed values.
+            -- Returns the lines of the visualized tree + dimension of the rectangle it fits in.
             -- See below for its postconditions (checked at every return).
-            show' :: Show a => CartesianTree a -> ([String], Int, Int)
-            show' Empty = checkPost ([],0,0)
-            show' (Node val left right) = checkPost (first:rest, lw+vw+rw, rows+1)
+            show' :: Show a => CartesianTree a -> Int -> ([String], Int, Int)
+            show' Empty n = checkPost ([],0,0)
+            show' (Node val left right) n = checkPost (first:rest, lw+vw+rw+n, rows+1)
               where pad :: Int -> String
                     pad n = replicate n ' '
-                    first = (pad lw) ++ show val ++ (pad rw)
+                    first = (pad lw) ++ show val ++ (pad $ rw+n) -- Added only to the right
                     vw = length $ show val
-                    (lres, lw, lh) = show' left
-                    (rres, rw, rh) = show' right
+                    (lres, lw, lh) = show' left n
+                    (rres, rw, rh) = show' right n
                     rows = max lh rh
-                    rest = zipWith (\l r -> l ++ (pad vw) ++ r) (lres ++ replicate (rows - lh) (pad lw))
-                                                                (rres ++ replicate (rows - rh) (pad rw))
+                    rest = zipWith (\l r -> l ++ (pad $ vw+n) ++ r) (lres ++ replicate (rows - lh) (pad lw))
+                                                                    (rres ++ replicate (rows - rh) (pad rw))
             -- Checks the show' postconditions (impurely). Can be overridden to id.
-            checkPost (res,w,h) = if ok then (res,w,h) else error "show' postcondition violated"
+            checkPost (res,w,h) = if ok then (res,w,h) else error "Postcondition violated"
               where ok = length res == h && all ((==w).length) res
 
 -- Omega(nlgn), but O(n^2) if the tree ends up imbalanced (no control over that)
