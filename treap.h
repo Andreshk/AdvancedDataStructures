@@ -5,6 +5,8 @@
 #include <type_traits>
 #include "vassert.h"
 
+using Real = float;
+
 template<typename T, typename Comp = std::less<T>>
 class Treap {
     struct Node;
@@ -18,9 +20,9 @@ class Treap {
     };
     struct Node : NodeBase {
         T value;
-        double pr;
+        Real pr;
         template<class... Args> // only constructor you need, lol
-        Node(Node* parent, double pr, Args&&... args)
+        Node(Node* parent, Real pr, Args&&... args)
             : NodeBase{ parent }, value(std::forward<Args>(args)...), pr{ pr } {}
     };
     /* dummy node, for which the following hold:
@@ -80,18 +82,22 @@ public:
     Treap& operator=(Treap&&) noexcept;
     ~Treap() { clear(); }
 
-    void insert(const T& value) { emplace(value); }
-    void insert(T&& value) { emplace(std::move(value)); }
-    template<class InputIt> // to-do: constrain w/ a concept
-    void insert(InputIt, InputIt);
-    void insert(std::initializer_list<T> il) { insert(il.begin(), il.end()); }
+    // Notes:
+    // - sizeof(mt19937_64) == 5000 => not feasible to keep a copy inside each Treap
+    // - having a static mt19937_64 per Treap type will lead to race conditions when using Treap from different threads :(
+    // - maybe this is the way to go (how will we insert >1 value then?)
+    void insert(Real pr, const T& value) { emplace(pr, value); }
+    void insert(Real pr, T&& value) { emplace(pr, std::move(value)); }
+    //template<class InputIt> // to-do: constrain w/ a concept
+    //void insert(InputIt, InputIt);
+    //void insert(std::initializer_list<T> il) { insert(il.begin(), il.end()); }
     
     // to-do: comment that the returned iterator is the next one
     iterator erase(iterator);
     iterator erase(iterator, iterator);
     iterator find(const T&) const;
     template<class... Args>
-    void emplace(Args&&...);
+    void emplace(Real, Args&&...);
 
     iterator begin() const noexcept;
     iterator end() const noexcept;
@@ -280,14 +286,14 @@ auto Treap<T, Comp>::operator=(Treap&& other) noexcept -> Treap& {
     return *this;
 }
 
-template<typename T, typename Comp>
+/*template<typename T, typename Comp>
 template<class InputIt>
 void Treap<T, Comp>::insert(InputIt from, InputIt to) {
     while (from != to) {
         insert(*from);
         ++from;
     }
-}
+}*/
 
 // to-do: this also doesn't depend on Comp type
 // Ideally, it should delegate to some node function that does
@@ -354,8 +360,8 @@ auto Treap<T, Comp>::find(const T& value) const -> iterator {
 
 template<typename T, typename Comp>
 template<class ...Args>
-void Treap<T, Comp>::emplace(Args&&... _args) {
-    Node* newNode = new Node(nullptr, 0, std::forward<Args>(_args)...);
+void Treap<T, Comp>::emplace(Real pr, Args&&... _args) {
+    Node* newNode = new Node(nullptr, pr, std::forward<Args>(_args)...);
     const T& newVal = newNode->value;
     Node* location = root();
     Node* parent = _this_as_node(); // <=> root()->parent, but faster
@@ -376,6 +382,10 @@ void Treap<T, Comp>::emplace(Args&&... _args) {
         parent->left = location;
     } else {
         parent->right = location;
+    }
+    // BUBBLE UP & USE ROTATIONS (!)
+    while (parent != _this_as_node()) {
+        vassert(false && "to-do"); break;
     }
     ++count;
 }
