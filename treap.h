@@ -55,6 +55,7 @@ class Treap {
     static void rotateLeft(Node*&) noexcept;
     static void rotateRight(Node*&) noexcept;
     static bool validHeap(const Node*) noexcept;
+    bool validBST(const Node*, const T&, const T&) const noexcept;
 public:
     class iterator {
         friend class Treap<T, Comp>;
@@ -70,9 +71,8 @@ public:
         iterator& operator--() noexcept;
         iterator operator++(int) noexcept { auto copy = *this; ++(*this); return copy; }
         iterator operator--(int) noexcept { auto copy = *this; --(*this); return copy; }
-        operator bool() const noexcept { return (ptr->parent != ptr); } // not standard in STL
-        bool operator==(const iterator& other) const noexcept { return (ptr == other.ptr); }
-        auto operator<=>(const iterator& other) const noexcept { return (ptr <=> other.ptr); }
+        explicit operator bool() const noexcept { return (ptr->parent != ptr); } // not standard in STL
+        auto operator<=>(const iterator&) const noexcept = default;
     };
     // to-do: why does this cause internal compiler errors :/
     Treap(/*const Comp& comp = Comp{}*/) noexcept(std::is_nothrow_copy_constructible_v<Comp>)
@@ -265,6 +265,13 @@ bool Treap<T, Comp>::validHeap(const Node* ptr) noexcept {
         && (!ptr->right || (ptr->pr <= ptr->right->pr && validHeap(ptr->right))));
 }
 
+template <typename T, typename Comp>
+bool Treap<T, Comp>::validBST(const Node* ptr, const T& min, const T& max) const noexcept {
+    return (!comp(ptr->value, min) && !comp(max, ptr->value)
+        && (!ptr->left || validBST(ptr->left, min, ptr->value))
+        && (!ptr->right || validBST(ptr->right, ptr->value, max)));
+}
+
 template<typename T, typename Comp>
 Treap<T, Comp>::Treap(const Treap& other) : Treap() {
     copyFrom(other);
@@ -315,42 +322,33 @@ auto Treap<T, Comp>::erase(iterator it) -> iterator {
     const Node* location = it.ptr;
     ++it;
     --count;
-    // The node to be deleted can have 0,1 or 2 children.
-    if (!location->left && !location->right) {
+    // Bubble down the node to be deleted to a leaf & cut this leaf
+    while (location->left && location->right) {
+        Node* parent = location->parent;
+        Node*& toLocation = (location == parent->left ? parent->left : parent->right);
+        if (location->left->pr < location->right->pr) {
+            // The left child should be above the right
+            rotateRight(toLocation);
+        } else {
+            rotateLeft(toLocation);
+        }
+    }
+    // If the node has one child, it's 1 rotation away from becoming
+    // a leaf, so we directly link its parent to this child.
+    if (location->left) {
+        updateParent(location, location->left);
+    } else if (location->right) {
+        updateParent(location, location->right);
+    } else {
         // No children => leaf node => cut it & let its parent know
         updateParent(location, nullptr);
-    } else if (!location->left || !location->right) {
-        // One child node -> safe for our parent to adopt it
-        Node* onlyChild = ((location->left) ? location->left : location->right);
-        updateParent(location, onlyChild);
-    } else {
-        // THIS SHOULD BE HEAP BUBBLE DOWN!!!
-        vassert(false && "FIX ME!!!");
-        // Намираме най-голямата стойност, по-малка от търсената.
-        // Този възел "изваждаме" от дървото (аналогично на предишния случай)
-        // и вмъкваме на мястото на премахваната стойност.
-        Node* candidate = location->left;
-        while (candidate->right)
-            candidate = candidate->right;
-        // знаем, че ако тази най-голяма по-малка стойност има дете, то може да е само ляво
-        updateParent(candidate, candidate->left);
-
-        // актуализираме указателите към и от децата на "кандидата"
-        candidate->left = location->left;
-        candidate->right = location->right;
-        // (!) ако кандидатът е ляво дете на location и няма свое ляво дете,
-        // то след updateParent location->left става nullptr!!!
-        if (location->left)
-            location->left->parent = candidate;
-        // проверяваме само лявото дете, понеже търсим в лявото поддърво и дясното не се променя
-        location->right->parent = candidate;
-
-        // казваме на родителя на location, че вече candidate му е син
-        // това актуализира и parent указателя на candidate
-        updateParent(location, candidate);
     }
-    // free the memory in question & return the updated iterator
+    // Finally, free the memory in question & return the updated iterator
     delete location;
+    if (root()) {
+        vassert(validHeap(root()));
+        vassert(validBST(root(), *begin(), *--end()));
+    }
     return it;
 }
 
@@ -359,6 +357,7 @@ auto Treap<T, Comp>::erase(iterator from, iterator to) -> iterator {
     while (from != to) {
         from = erase(from);
     }
+    return to; // to-do: what is the point of this?
 }
 
 template<typename T, typename Comp>
@@ -410,6 +409,8 @@ void Treap<T, Comp>::emplace(Real pr, Args&&... _args) {
     }
     ++count;
     vassert(validHeap(root()));
+    vassert(validBST(root(), *begin(), *--end()));
+    // to-do: return iterator to the inserted value
 }
 
 template<typename T, typename Comp>
