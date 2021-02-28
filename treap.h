@@ -54,6 +54,7 @@ class Treap {
     static void updateParent(const Node*, Node*) noexcept;
     static void rotateLeft(Node*&) noexcept;
     static void rotateRight(Node*&) noexcept;
+    static bool validHeap(const Node*) noexcept;
 public:
     class iterator {
         friend class Treap<T, Comp>;
@@ -259,8 +260,15 @@ void Treap<T, Comp>::rotateRight(Node*& ptr) noexcept {
 }
 
 template<typename T, typename Comp>
+bool Treap<T, Comp>::validHeap(const Node* ptr) noexcept {
+    return ((!ptr->left || (ptr->pr <= ptr->left->pr && validHeap(ptr->left)))
+        && (!ptr->right || (ptr->pr <= ptr->right->pr && validHeap(ptr->right))));
+}
+
+template<typename T, typename Comp>
 Treap<T, Comp>::Treap(const Treap& other) : Treap() {
     copyFrom(other);
+    vassert(dummy.parent == _this_as_node());
 }
 
 template<typename T, typename Comp>
@@ -269,6 +277,7 @@ auto Treap<T, Comp>::operator=(const Treap& other) -> Treap& {
         clear();
         copyFrom(other);
     }
+    vassert(dummy.parent == _this_as_node());
     return *this;
 }
 
@@ -383,11 +392,24 @@ void Treap<T, Comp>::emplace(Real pr, Args&&... _args) {
     } else {
         parent->right = location;
     }
-    // BUBBLE UP & USE ROTATIONS (!)
-    while (parent != _this_as_node()) {
-        vassert(false && "to-do"); break;
+    // Bubble up the newly inserted note via rotations until
+    // the heap property is restored (or it reaches the root)
+    while (parent != _this_as_node() && location->pr < parent->pr) {
+        // Parent node is a valid, "full" one => rotate the new node up to its position
+        Node* grandParent = parent->parent;
+        Node*& toParent = (grandParent->left == parent ? grandParent->left : grandParent->right);
+        if (parent->left == location) { // left child -> rotate right
+            rotateRight(toParent);
+            vassert(parent == location->right);
+        } else { // right child -> rotate left
+            rotateLeft(toParent);
+            vassert(parent == location->left);
+        }
+        vassert(toParent == location && grandParent == location->parent);
+        parent = grandParent;
     }
     ++count;
+    vassert(validHeap(root()));
 }
 
 template<typename T, typename Comp>
@@ -403,6 +425,8 @@ void Treap<T, Comp>::swap(Treap& other) noexcept {
     swap(root(), other.root());
     swap(count, other.count);
     swap(comp, other.comp);
+    vassert(dummy.parent == _this_as_node());
+    vassert(other.dummy.parent == other._this_as_node());
 }
 
 template<typename T, typename Comp>
