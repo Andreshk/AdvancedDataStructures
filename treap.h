@@ -1,6 +1,7 @@
 #pragma once
-#include <cstddef>    // size_t
-#include <random>
+#include <cstddef>    // size_t, ptrdiff_t
+#include <ranges>     // std::ranges::bidirectional_range
+#include <iterator>   // std::bidirectional_iterator
 #include <functional> // std::less
 #include <type_traits>
 #include "vassert.h"
@@ -90,8 +91,15 @@ public:
         // Only the treap can construct iterators to itself
         iterator(const NodeBase* ptr) noexcept : ptr{ ptr } { vassert(ptr); }
     public:
-        // to-do: all typedefs & operators to qualify as bidirectional
-        // iterator (or whatever category std::set<T>::iterator is)
+        using value_type = T; // should be non-const, even for const iterators
+        using pointer    = const T*;
+        using reference  = const T&;
+        using difference_type   = std::ptrdiff_t;
+        using iterator_category = std::bidirectional_iterator_tag;
+        using iterator_concept  = std::bidirectional_iterator_tag;
+        // All methods, required for the bidirectional iterator concept,
+        // including the stupid default initialization.
+        iterator() : ptr{ nullptr } {};
         const T& operator*() const noexcept { return toNode(ptr)->value; }
         const T* operator->() const noexcept { return &toNode(ptr)->value; }
         iterator& operator++() noexcept { ptr = NodeBase::advance(ptr); return *this; }
@@ -101,6 +109,8 @@ public:
         explicit operator bool() const noexcept { return (ptr->parent != ptr); } // not standard in STL
         auto operator<=>(const iterator&) const noexcept = default;
     };
+    static_assert(std::bidirectional_iterator<iterator>);
+
     // to-do: why does this cause internal compiler errors :/
     Treap(/*const Comp& comp = Comp{}*/) noexcept(std::is_nothrow_copy_constructible_v<Comp>)
         : dummy{ &dummy, Real{ 0 } }, count{ 0 }, comp{ /*comp*/ } {}
@@ -108,12 +118,17 @@ public:
     Treap& operator=(const Treap&);
     Treap(Treap&&) noexcept;
     Treap& operator=(Treap&&) noexcept;
-    ~Treap() { clear(); }
+    ~Treap() {
+        // Add this in the one method, guaranteed to be instantiated
+        static_assert(std::ranges::bidirectional_range<Treap>);
+        clear();
+    }
 
     // Notes about insertion interface:
     // - sizeof(mt19937_64) == 5000 => maybe not feasible to keep a copy inside each Treap
-    // - having a static mt19937_64 per Treap type will lead to race conditions when using Treap from different threads :(
-    // - allocators return shlightly random addresses -> maybe use them (& remove the priority fields)
+    // - having a static mt19937_64 per Treap type will lead to race
+    //   conditions even when using different Treaps from different threads :(
+    // - allocators return slightly random addresses -> maybe use them (& remove the priority fields)
     // - maybe this is the way to go, and forbid adding more than 1 value at a time
 
     // The following three functions insert a single value with its corresponding random value in [0;1).
@@ -124,7 +139,7 @@ public:
     iterator emplace(Real, Args&&...);
     //template<class InputIt> // to-do: constrain w/ a concept
     //void insert(InputIt, InputIt);
-    //void insert(std::initializer_list<T> il) { insert(il.begin(), il.end()); } // to-do: use any forward range (!)
+    //void insert(std::initializer_list<T> il) { insert(il.begin(), il.end()); } // to-do: use any forward range
     
     // Erases a value & returns an iterator to the next one
     iterator erase(iterator);
@@ -137,9 +152,9 @@ public:
     iterator begin() const noexcept;
     // Returns an iterator to one-past-the-last (largest) value in the treap
     iterator end() const noexcept;
-    // Returns the numebr of values in the treap
+    // Returns the number of values in the treap
     size_t size() const noexcept { return count; }
-    // Checks whetehr the treap is empty
+    // Checks whether the treap is empty
     bool empty() const noexcept { return (count == 0); }
     // Removes all values from the treap, deallocates all memory & returns it to a default-constructed state.
     void clear() noexcept;
@@ -431,7 +446,7 @@ auto Treap<T, Comp>::erase(iterator from, iterator to) -> iterator {
     while (from != to) {
         from = erase(from);
     }
-    return to; // to-do: what is the point of this?
+    return from; // to-do: what is the point of this?
 }
 
 template<typename T, typename Comp>
