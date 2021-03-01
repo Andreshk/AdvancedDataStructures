@@ -15,18 +15,20 @@ struct NodeBase {
     NodeBase(NodeBase* parent, Real pr) : parent{ parent }, left{ nullptr }, right{ nullptr }, pr{ pr } {};
 };
 
+template <typename T>
+struct Node : NodeBase {
+    T value;
+    template<class... Args> // only constructor you need, lol
+    Node(NodeBase* parent, Real pr, Args&&... args)
+        : NodeBase{ parent, pr }, value(std::forward<Args>(args)...) {}
+};
+
 template<typename T, typename Comp = std::less<T>>
 class Treap {
-    struct Node : NodeBase {
-        T value;
-        template<class... Args> // only constructor you need, lol
-        Node(NodeBase* parent, Real pr, Args&&... args)
-            : NodeBase{ parent, pr }, value(std::forward<Args>(args)...) {}
-    };
-    /* dummy node, for which the following hold:
+    /* dummy (sentinel) node, for which the following hold:
      - dummy.parent == &dummy, i.e. the dummy node is its own parent
-     - dummy.left   points to the actual root node of the tree. see root() below
-     - dummy.right  should (and will) always be null in order for ++(--end()) == end() */
+     - dummy.left points to the actual root node of the tree. see root() below
+     - dummy.right should (and will) always be null in order for ++(--end()) == end() */
     NodeBase dummy;
     /* Note: parent pointers will never be null - saves a LOT of runtime checks. Also ptr->parent == ptr
        only for a pointer to the dummy node - this is a beautiful way to check if an iterator == end().
@@ -34,35 +36,39 @@ class Treap {
     size_t count;
     Comp comp;
 
-    // _this_as_node()         <=> &dummy, from which we have
-    // _this_as_node()->left   <=> dummy.left <=> root() and
-    // _this_as_node()->parent <=> dummy.parent <=> &dummy <=> _this_as_node()
-    // _this_as_node()         <=> root()->parent as long as root()!=nullptr
-          NodeBase*& root()       noexcept { return dummy.left; } // <=> _this_as_node()->left
+    // For easier access to the actual root of the tree structure
+          NodeBase*& root()       noexcept { return dummy.left; }
     NodeBase* const& root() const noexcept { return dummy.left; }
+    static Node<T>* toNode(NodeBase* ptr) {
+        vassert(!(ptr && ptr->parent == ptr) && "Forbidden reinterpret_cast on dummy node!");
+        return reinterpret_cast<Node<T>*>(ptr);
+    }
+    static const Node<T>* toNode(const NodeBase* ptr) {
+        vassert(!(ptr && ptr->parent == ptr) && "Forbidden reinterpret_cast on dummy node!");
+        return reinterpret_cast<const Node<T>*>(ptr);
+    }
 
     void copyFrom(const Treap&);
-    const Node* findNode(const T&) const;
+    const Node<T>* findNode(const T&) const;
 
-    static Node* copyNode(const Node*, const NodeBase*);
+    static Node<T>* copyNode(const Node<T>*, const NodeBase*);
     static void freeNode(const NodeBase*) noexcept;
     static void updateParent(const NodeBase*, NodeBase*) noexcept;
     static void rotateLeft(NodeBase*&) noexcept;
     static void rotateRight(NodeBase*&) noexcept;
     static bool validHeap(const NodeBase*) noexcept;
-    bool validBST(const Node*, const T&, const T&) const noexcept;
+    bool validBST(const Node<T>*, const T&, const T&) const noexcept;
 public:
     class iterator {
         friend class Treap<T, Comp>;
         const NodeBase* ptr;
         // Only the treap can construct iterators to itself
         iterator(const NodeBase* ptr) noexcept : ptr{ ptr } { vassert(ptr); }
-        const Node* toNode() const noexcept { vassert(bool(*this)); return reinterpret_cast<const Node*>(ptr); }
     public:
         // to-do: all typedefs & operators to qualify as bidirectional
         // iterator (or whatever category std::set<T>::iterator is)
-        const T& operator*() const noexcept { return toNode()->value; }
-        const T* operator->() const noexcept { return &toNode()->value; }
+        const T& operator*() const noexcept { return toNode(ptr)->value; }
+        const T* operator->() const noexcept { return &toNode(ptr)->value; }
         iterator& operator++() noexcept;
         iterator& operator--() noexcept;
         iterator operator++(int) noexcept { auto copy = *this; ++(*this); return copy; }
@@ -170,13 +176,13 @@ void Treap<T, Comp>::copyFrom(const Treap& other) {
 }
 
 template<typename T, typename Comp>
-auto Treap<T, Comp>::findNode(const T& value) const -> const Node* {
-    const Node* location = reinterpret_cast<const Node*>(root());
+auto Treap<T, Comp>::findNode(const T& value) const -> const Node<T>* {
+    const Node<T>* location = toNode(root());
     while (location) {
         if (comp(value, location->value)) {
-            location = reinterpret_cast<const Node*>(location->left);
+            location = toNode(location->left);
         } else if (comp(location->value, value)) {
-            location = reinterpret_cast<const Node*>(location->right);
+            location = toNode(location->right);
         } else {
             return location; //found it
         }
@@ -185,7 +191,7 @@ auto Treap<T, Comp>::findNode(const T& value) const -> const Node* {
 }
 
 template<typename T, typename Comp>
-auto Treap<T, Comp>::copyNode(const Node* ptr, const NodeBase* parent) -> Node* {
+auto Treap<T, Comp>::copyNode(const Node<T>* ptr, const NodeBase* parent) -> Node<T>* {
     if (!ptr) {
         return nullptr;
     }
@@ -200,7 +206,7 @@ void Treap<T, Comp>::freeNode(const NodeBase* ptr) noexcept {
     if (ptr) {
         freeNode(ptr->left);
         freeNode(ptr->right);
-        delete reinterpret_cast<const Node*>(ptr);
+        delete toNode(ptr);
     }
 }
 
@@ -263,10 +269,10 @@ bool Treap<T, Comp>::validHeap(const NodeBase* ptr) noexcept {
 }
 
 template <typename T, typename Comp>
-bool Treap<T, Comp>::validBST(const Node* ptr, const T& min, const T& max) const noexcept {
+bool Treap<T, Comp>::validBST(const Node<T>* ptr, const T& min, const T& max) const noexcept {
     return (!comp(ptr->value, min) && !comp(max, ptr->value)
-        && (!ptr->left || validBST(reinterpret_cast<const Node*>(ptr->left), min, ptr->value))
-        && (!ptr->right || validBST(reinterpret_cast<const Node*>(ptr->right), ptr->value, max)));
+        && (!ptr->left || validBST(toNode(ptr->left), min, ptr->value))
+        && (!ptr->right || validBST(toNode(ptr->right), ptr->value, max)));
 }
 
 template<typename T, typename Comp>
@@ -342,10 +348,10 @@ auto Treap<T, Comp>::erase(iterator it) -> iterator {
         updateParent(location, nullptr);
     }
     // Finally, free the memory in question & return the updated iterator
-    delete reinterpret_cast<const Node*>(location);
+    delete toNode(location);
     if (root()) {
         vassert(validHeap(root()));
-        vassert(validBST(reinterpret_cast<const Node*>(root()), *begin(), *--end()));
+        vassert(validBST(toNode(root()), *begin(), *--end()));
     }
     return it;
 }
@@ -360,25 +366,25 @@ auto Treap<T, Comp>::erase(iterator from, iterator to) -> iterator {
 
 template<typename T, typename Comp>
 auto Treap<T, Comp>::find(const T& value) const -> iterator {
-    const Node* location = findNode(value);
+    const Node<T>* location = findNode(value);
     return (location ? iterator(location) : end());
 }
 
 template<typename T, typename Comp>
 template<class ...Args>
 void Treap<T, Comp>::emplace(Real pr, Args&&... _args) {
-    Node* newNode = new Node(nullptr, pr, std::forward<Args>(_args)...);
+    Node<T>* newNode = new Node<T>(nullptr, pr, std::forward<Args>(_args)...);
     const T& newVal = newNode->value;
-    Node* location = reinterpret_cast<Node*>(root());
+    Node<T>* location = toNode(root());
     NodeBase* parent = &dummy; // <=> root()->parent
     bool isLeft = true; // Whether location is the left or right child of its root
     while (location) {
         parent = location;
         if (comp(newVal, location->value)) {
-            location = reinterpret_cast<Node*>(location->left);
+            location = toNode(location->left);
             isLeft = true;
         } else {
-            location = reinterpret_cast<Node*>(location->right);
+            location = toNode(location->right);
             isLeft = false;
         }
     }
@@ -408,13 +414,13 @@ void Treap<T, Comp>::emplace(Real pr, Args&&... _args) {
     }
     ++count;
     vassert(validHeap(root()));
-    vassert(validBST(reinterpret_cast<const Node*>(root()), *begin(), *--end()));
+    vassert(validBST(toNode(root()), *begin(), *--end()));
     // to-do: return iterator to the inserted value
 }
 
 template<typename T, typename Comp>
 void Treap<T, Comp>::clear() noexcept {
-    freeNode(reinterpret_cast<const Node*>(root()));
+    freeNode(toNode(root()));
     root() = nullptr;
     count = 0;
 }
