@@ -7,23 +7,21 @@
 
 using Real = float;
 
+struct NodeBase {
+    NodeBase* parent;
+    NodeBase* left;
+    NodeBase* right;
+    Real pr;
+    NodeBase(NodeBase* parent, Real pr) : parent{ parent }, left{ nullptr }, right{ nullptr }, pr{ pr } {};
+};
+
 template<typename T, typename Comp = std::less<T>>
 class Treap {
-    struct Node;
-    struct NodeBase {
-        // to-do: these SHOULD be NodeBase => lift outside of the Treap class
-        // also lift Node<T> outside, so that it odesn't depend on Comp
-        Node* parent;
-        Node* left;
-        Node* right;
-        NodeBase(Node* parent) : parent{ parent }, left{ nullptr }, right{ nullptr } {}
-    };
     struct Node : NodeBase {
         T value;
-        Real pr;
         template<class... Args> // only constructor you need, lol
-        Node(Node* parent, Real pr, Args&&... args)
-            : NodeBase{ parent }, value(std::forward<Args>(args)...), pr{ pr } {}
+        Node(NodeBase* parent, Real pr, Args&&... args)
+            : NodeBase{ parent, pr }, value(std::forward<Args>(args)...) {}
     };
     /* dummy node, for which the following hold:
      - dummy.parent == &dummy, i.e. the dummy node is its own parent
@@ -40,33 +38,31 @@ class Treap {
     // _this_as_node()->left   <=> dummy.left <=> root() and
     // _this_as_node()->parent <=> dummy.parent <=> &dummy <=> _this_as_node()
     // _this_as_node()         <=> root()->parent as long as root()!=nullptr
-          Node*& root()       noexcept { return dummy.left; } // <=> _this_as_node()->left
-    Node* const& root() const noexcept { return dummy.left; }
-    // to-do: avoid these (!)
-          Node* _this_as_node()       noexcept { return reinterpret_cast<      Node*>(&dummy); }
-    const Node* _this_as_node() const noexcept { return reinterpret_cast<const Node*>(&dummy); }
+          NodeBase*& root()       noexcept { return dummy.left; } // <=> _this_as_node()->left
+    NodeBase* const& root() const noexcept { return dummy.left; }
 
     void copyFrom(const Treap&);
     const Node* findNode(const T&) const;
 
-    static Node* copyNode(const Node*, const Node*);
-    static void freeNode(const Node*) noexcept;
-    static void updateParent(const Node*, Node*) noexcept;
-    static void rotateLeft(Node*&) noexcept;
-    static void rotateRight(Node*&) noexcept;
-    static bool validHeap(const Node*) noexcept;
+    static Node* copyNode(const Node*, const NodeBase*);
+    static void freeNode(const NodeBase*) noexcept;
+    static void updateParent(const NodeBase*, NodeBase*) noexcept;
+    static void rotateLeft(NodeBase*&) noexcept;
+    static void rotateRight(NodeBase*&) noexcept;
+    static bool validHeap(const NodeBase*) noexcept;
     bool validBST(const Node*, const T&, const T&) const noexcept;
 public:
     class iterator {
         friend class Treap<T, Comp>;
-        const Node* ptr;
+        const NodeBase* ptr;
         // Only the treap can construct iterators to itself
-        iterator(const Node* ptr) noexcept : ptr{ ptr } {}
+        iterator(const NodeBase* ptr) noexcept : ptr{ ptr } { vassert(ptr); }
+        const Node* toNode() const noexcept { vassert(bool(*this)); return reinterpret_cast<const Node*>(ptr); }
     public:
         // to-do: all typedefs & operators to qualify as bidirectional
         // iterator (or whatever category std::set<T>::iterator is)
-        const T& operator*() const noexcept { return ptr->value; }
-        const T* operator->() const noexcept { return &ptr->value; }
+        const T& operator*() const noexcept { return toNode()->value; }
+        const T* operator->() const noexcept { return &toNode()->value; }
         iterator& operator++() noexcept;
         iterator& operator--() noexcept;
         iterator operator++(int) noexcept { auto copy = *this; ++(*this); return copy; }
@@ -76,7 +72,7 @@ public:
     };
     // to-do: why does this cause internal compiler errors :/
     Treap(/*const Comp& comp = Comp{}*/) noexcept(std::is_nothrow_copy_constructible_v<Comp>)
-        : dummy{ _this_as_node() }, count{ 0 }, comp{ /*comp*/ } {}
+        : dummy{ &dummy, Real{ 0 } }, count{ 0 }, comp{ /*comp*/ } {}
     Treap(const Treap&);
     Treap& operator=(const Treap&);
     Treap(Treap&&) noexcept;
@@ -120,7 +116,7 @@ auto Treap<T, Comp>::iterator::operator++() noexcept -> iterator& {
         }
     } else { // otherwise, find the smallest right predecessor by going as up-left as possible
         // parent pointers will never be nullptr!
-        Node* parent = ptr->parent;
+        NodeBase* parent = ptr->parent;
         while (/*ptr->parent &&*/ptr == parent->right) {
             ptr = parent;
             parent = parent->parent;
@@ -139,7 +135,7 @@ auto Treap<T, Comp>::iterator::operator--() noexcept -> iterator& {
             ptr = ptr->right;
         }
     } else {
-        Node* parent = ptr->parent;
+        NodeBase* parent = ptr->parent;
         while (ptr == parent->left) {
             ptr = parent;
             parent = parent->parent;
@@ -151,8 +147,9 @@ auto Treap<T, Comp>::iterator::operator--() noexcept -> iterator& {
 
 template<typename T, typename Comp>
 auto Treap<T, Comp>::begin() const noexcept -> iterator {
-    const Node* location = _this_as_node();
-    while (location->left) { // _this_as_node()->left is the same as this->root();
+    // Note: don't assign to root(); this should be ==end() for empty treaps
+    const NodeBase* location = &dummy;
+    while (location->left) {
         location = location->left;
     }
     return { location };
@@ -160,26 +157,26 @@ auto Treap<T, Comp>::begin() const noexcept -> iterator {
 
 template<typename T, typename Comp>
 auto Treap<T, Comp>::end() const noexcept -> iterator {
-    return { _this_as_node() };
+    return { &dummy };
 }
 
 // tree stuff
 template<typename T, typename Comp>
 void Treap<T, Comp>::copyFrom(const Treap& other) {
     vassert(!root());
-    root() = copyNode(other.root(), _this_as_node());
+    root() = copyNode(other.root(), &dummy);
     count = other.count;
     comp = other.comp;
 }
 
 template<typename T, typename Comp>
 auto Treap<T, Comp>::findNode(const T& value) const -> const Node* {
-    const Node* location = root();
+    const Node* location = reinterpret_cast<const Node*>(root());
     while (location) {
         if (comp(value, location->value)) {
-            location = location->left;
+            location = reinterpret_cast<const Node*>(location->left);
         } else if (comp(location->value, value)) {
-            location = location->right;
+            location = reinterpret_cast<const Node*>(location->right);
         } else {
             return location; //found it
         }
@@ -188,7 +185,7 @@ auto Treap<T, Comp>::findNode(const T& value) const -> const Node* {
 }
 
 template<typename T, typename Comp>
-auto Treap<T, Comp>::copyNode(const Node* ptr, const Node* parent) -> Node* {
+auto Treap<T, Comp>::copyNode(const Node* ptr, const NodeBase* parent) -> Node* {
     if (!ptr) {
         return nullptr;
     }
@@ -199,20 +196,20 @@ auto Treap<T, Comp>::copyNode(const Node* ptr, const Node* parent) -> Node* {
 }
 
 template<typename T, typename Comp>
-void Treap<T, Comp>::freeNode(const Node* ptr) noexcept {
+void Treap<T, Comp>::freeNode(const NodeBase* ptr) noexcept {
     if (ptr) {
         freeNode(ptr->left);
         freeNode(ptr->right);
-        delete ptr;
+        delete reinterpret_cast<const Node*>(ptr);
     }
 }
 
 template<typename T, typename Comp>
-void Treap<T, Comp>::updateParent(const Node* location, Node* newChild) noexcept {
+void Treap<T, Comp>::updateParent(const NodeBase* location, NodeBase* newChild) noexcept {
     // "Removes" a node from the tree by replacing its
     // parent pointer to itself with a new child node.
     // Reminder that parent pointers are always non-null
-    Node* parent = location->parent;
+    NodeBase* parent = location->parent;
     if (location == parent->left) {
         parent->left = newChild;
     } else {
@@ -224,13 +221,13 @@ void Treap<T, Comp>::updateParent(const Node* location, Node* newChild) noexcept
 }
 
 template<typename T, typename Comp>
-void Treap<T, Comp>::rotateLeft(Node*& ptr) noexcept {
+void Treap<T, Comp>::rotateLeft(NodeBase*& ptr) noexcept {
     // if the tree is empty or has no right subtree, rotating left is impossible
     if (!ptr || !ptr->right) {
         vassert(false); // (?)
         return;
     }
-    Node* tmp = ptr->right;
+    NodeBase* tmp = ptr->right;
     ptr->right = tmp->left;
     if (ptr->right) {
         ptr->right->parent = ptr;
@@ -242,13 +239,13 @@ void Treap<T, Comp>::rotateLeft(Node*& ptr) noexcept {
 }
 
 template<typename T, typename Comp>
-void Treap<T, Comp>::rotateRight(Node*& ptr) noexcept {
+void Treap<T, Comp>::rotateRight(NodeBase*& ptr) noexcept {
     // if the tree is empty or has no left subtree, rotating right is impossible
     if (!ptr || !ptr->left) {
         vassert(false); // (?)
         return;
     }
-    Node* tmp = ptr->left;
+    NodeBase* tmp = ptr->left;
     ptr->left = tmp->right;
     if (ptr->left) {
         ptr->left->parent = ptr;
@@ -260,7 +257,7 @@ void Treap<T, Comp>::rotateRight(Node*& ptr) noexcept {
 }
 
 template<typename T, typename Comp>
-bool Treap<T, Comp>::validHeap(const Node* ptr) noexcept {
+bool Treap<T, Comp>::validHeap(const NodeBase* ptr) noexcept {
     return ((!ptr->left || (ptr->pr <= ptr->left->pr && validHeap(ptr->left)))
         && (!ptr->right || (ptr->pr <= ptr->right->pr && validHeap(ptr->right))));
 }
@@ -268,14 +265,14 @@ bool Treap<T, Comp>::validHeap(const Node* ptr) noexcept {
 template <typename T, typename Comp>
 bool Treap<T, Comp>::validBST(const Node* ptr, const T& min, const T& max) const noexcept {
     return (!comp(ptr->value, min) && !comp(max, ptr->value)
-        && (!ptr->left || validBST(ptr->left, min, ptr->value))
-        && (!ptr->right || validBST(ptr->right, ptr->value, max)));
+        && (!ptr->left || validBST(reinterpret_cast<const Node*>(ptr->left), min, ptr->value))
+        && (!ptr->right || validBST(reinterpret_cast<const Node*>(ptr->right), ptr->value, max)));
 }
 
 template<typename T, typename Comp>
 Treap<T, Comp>::Treap(const Treap& other) : Treap() {
     copyFrom(other);
-    vassert(dummy.parent == _this_as_node());
+    vassert(dummy.parent == &dummy);
 }
 
 template<typename T, typename Comp>
@@ -284,7 +281,7 @@ auto Treap<T, Comp>::operator=(const Treap& other) -> Treap& {
         clear();
         copyFrom(other);
     }
-    vassert(dummy.parent == _this_as_node());
+    vassert(dummy.parent == &dummy);
     return *this;
 }
 
@@ -319,13 +316,14 @@ auto Treap<T, Comp>::erase(iterator it) -> iterator {
     if (it == end()) { // bonus: in STL erase(end()) is undefined behaviour
         return it;
     }
-    const Node* location = it.ptr;
+    const NodeBase* location = it.ptr;
     ++it;
     --count;
+    // to-do: this should be a static method, receiving a NodeBase
     // Bubble down the node to be deleted to a leaf & cut this leaf
     while (location->left && location->right) {
-        Node* parent = location->parent;
-        Node*& toLocation = (location == parent->left ? parent->left : parent->right);
+        NodeBase* parent = location->parent;
+        NodeBase*& toLocation = (location == parent->left ? parent->left : parent->right);
         if (location->left->pr < location->right->pr) {
             // The left child should be above the right
             rotateRight(toLocation);
@@ -344,10 +342,10 @@ auto Treap<T, Comp>::erase(iterator it) -> iterator {
         updateParent(location, nullptr);
     }
     // Finally, free the memory in question & return the updated iterator
-    delete location;
+    delete reinterpret_cast<const Node*>(location);
     if (root()) {
         vassert(validHeap(root()));
-        vassert(validBST(root(), *begin(), *--end()));
+        vassert(validBST(reinterpret_cast<const Node*>(root()), *begin(), *--end()));
     }
     return it;
 }
@@ -371,16 +369,16 @@ template<class ...Args>
 void Treap<T, Comp>::emplace(Real pr, Args&&... _args) {
     Node* newNode = new Node(nullptr, pr, std::forward<Args>(_args)...);
     const T& newVal = newNode->value;
-    Node* location = root();
-    Node* parent = _this_as_node(); // <=> root()->parent, but faster
+    Node* location = reinterpret_cast<Node*>(root());
+    NodeBase* parent = &dummy; // <=> root()->parent
     bool isLeft = true; // Whether location is the left or right child of its root
     while (location) {
         parent = location;
         if (comp(newVal, location->value)) {
-            location = location->left;
+            location = reinterpret_cast<Node*>(location->left);
             isLeft = true;
         } else {
-            location = location->right;
+            location = reinterpret_cast<Node*>(location->right);
             isLeft = false;
         }
     }
@@ -391,12 +389,13 @@ void Treap<T, Comp>::emplace(Real pr, Args&&... _args) {
     } else {
         parent->right = location;
     }
+    // to-do: this should also be a separate function (!)
     // Bubble up the newly inserted note via rotations until
     // the heap property is restored (or it reaches the root)
-    while (parent != _this_as_node() && location->pr < parent->pr) {
+    while (parent != &dummy && location->pr < parent->pr) {
         // Parent node is a valid, "full" one => rotate the new node up to its position
-        Node* grandParent = parent->parent;
-        Node*& toParent = (grandParent->left == parent ? grandParent->left : grandParent->right);
+        NodeBase* grandParent = parent->parent;
+        NodeBase*& toParent = (grandParent->left == parent ? grandParent->left : grandParent->right);
         if (parent->left == location) { // left child -> rotate right
             rotateRight(toParent);
             vassert(parent == location->right);
@@ -409,13 +408,13 @@ void Treap<T, Comp>::emplace(Real pr, Args&&... _args) {
     }
     ++count;
     vassert(validHeap(root()));
-    vassert(validBST(root(), *begin(), *--end()));
+    vassert(validBST(reinterpret_cast<const Node*>(root()), *begin(), *--end()));
     // to-do: return iterator to the inserted value
 }
 
 template<typename T, typename Comp>
 void Treap<T, Comp>::clear() noexcept {
-    freeNode(root());
+    freeNode(reinterpret_cast<const Node*>(root()));
     root() = nullptr;
     count = 0;
 }
@@ -426,8 +425,8 @@ void Treap<T, Comp>::swap(Treap& other) noexcept {
     swap(root(), other.root());
     swap(count, other.count);
     swap(comp, other.comp);
-    vassert(dummy.parent == _this_as_node());
-    vassert(other.dummy.parent == other._this_as_node());
+    vassert(dummy.parent == &dummy);
+    vassert(other.dummy.parent == &other.dummy);
 }
 
 template<typename T, typename Comp>
