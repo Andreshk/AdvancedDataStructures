@@ -31,6 +31,7 @@ struct BinomialTree {
     BinomialTreeArray<Rank - 1> subtrees;
 
     static constexpr unsigned Size = 1 + decltype(subtrees)::Size;
+    static_assert(Size == (1u << Rank)); // sanity check
     bool valid() const { return subtrees.valid(value); }
 };
 
@@ -119,7 +120,7 @@ BinomialHeap<N + (1u << Rank)> insert(const BinomialHeap<N>& bh, const BinomialT
     }
 }
 
-// Slow, unoptimal merging - insert one heap's trees sequentially in the other.
+// Slow, unoptimal merging - inserts one heap's trees sequentially in the other.
 // Essentially ignores the fact that the trees in rhs are ordered by rank.
 template <unsigned N, unsigned N1>
 BinomialHeap<N + N1> merge(const BinomialHeap<N>& lhs, const BinomialHeap<N1>& rhs) {
@@ -130,7 +131,7 @@ BinomialHeap<N + N1> merge(const BinomialHeap<N>& lhs, const BinomialHeap<N1>& r
     }
 }
 
-// Inserts of a single value in a binomial heap
+// Inserts a single value in a binomial heap by constructing a singleton heap & merging
 template <unsigned N>
 BinomialHeap<N + 1> insert(const BinomialHeap<N>& bh, const int value) {
     return merge(bh, BinomialHeap<1>{ { value } });
@@ -148,6 +149,7 @@ BinomialHeap<1 + sizeof...(Xs)> makeHeap() {
 } // namespace Meta
 
 // Stream output - for heap visualization.
+// Example: std::cout << Meta::makeHeap<2,5,3,4,6,1>() << "\n";
 template <unsigned Rank>
 std::ostream& operator<<(std::ostream&, const Meta::BinomialTree<Rank>&);
 
