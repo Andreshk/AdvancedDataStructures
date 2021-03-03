@@ -1,6 +1,7 @@
 #pragma once
 #include <iostream> // for visualization
 #include <bit> // std::countr_zero, std::has_single_bit
+#include <utility> // std::integer_sequence
 
 // Implementation of binomial heaps, parameterized by their size.
 // Since template arguments should be resolved at compilation time,
@@ -120,14 +121,48 @@ BinomialHeap<N + (1u << Rank)> insert(const BinomialHeap<N>& bh, const BinomialT
     }
 }
 
-// Slow, unoptimal merging - inserts one heap's trees sequentially in the other.
-// Essentially ignores the fact that the trees in rhs are ordered by rank.
+// Binomial heap merge. Should be optimal.
+// If the heaps correspond to lists of binomial trees, ordered by rank, this executes
+// the classical merge algorithm, but combining same-ranked trees into one of the next rank.
 template <unsigned N, unsigned N1>
 BinomialHeap<N + N1> merge(const BinomialHeap<N>& lhs, const BinomialHeap<N1>& rhs) {
-    if constexpr (std::has_single_bit(N1)) { // <=> BinomialHeap base case
-        return insert(lhs, rhs.t);
+    // The ranks of the heaps' first trees
+    constexpr unsigned R = std::countr_zero(N);
+    constexpr unsigned R1 = std::countr_zero(N1);
+    if constexpr (R < R1) {
+        if constexpr (std::has_single_bit(N)) {
+            return { lhs.t, rhs };
+        } else {
+            return { lhs.t, merge(lhs.ts, rhs) };
+        }
+    } else if constexpr (R > R1) {
+        return merge(rhs, lhs); // symmetrical case
     } else {
-        return merge(insert(lhs, rhs.t), rhs.ts);
+        // There can be no two trees of the same rank in the result => merge into a tree
+        // of the next rank. It corresponds to having a carry bit when adding N + N1.
+        const BinomialTree<R + 1> carry = mergeTrees(lhs.t, rhs.t);
+        constexpr unsigned R1N = (1u << (R + 1));
+        if constexpr (std::has_single_bit(N) && std::has_single_bit(N1)) {
+            // No more bits
+            return { carry };
+        } else if constexpr (std::has_single_bit(N)) {
+            // Only rhs has remaining bits => replace the empty remainder of lhs with the carry
+            return merge(BinomialHeap<R1N>{ carry }, rhs.ts);
+        } else if constexpr (std::has_single_bit(N1)) {
+            // Symmetrical case
+            return merge(lhs.ts, BinomialHeap<R1N>{ carry });
+        } else {
+            // We can now have >1 tree with the same rank as the carry.
+            // If so, insert the carry into either lhs or rhs before recursing.
+            if constexpr (R + 1 == std::countr_zero(decltype(lhs.ts)::Size)) { // lhs.ts already has the carry bit
+                return merge(insert(lhs.ts, carry), rhs.ts);
+            } else if constexpr (R + 1 == std::countr_zero(decltype(rhs.ts)::Size)) {
+                return merge(lhs.ts, insert(rhs.ts, carry));
+            } else {
+                // No problem, just add the carry bit to the results
+                return { carry, merge(lhs.ts, rhs.ts) };
+            }
+        }
     }
 }
 
@@ -137,6 +172,7 @@ BinomialHeap<N + 1> insert(const BinomialHeap<N>& bh, const int value) {
     return merge(bh, BinomialHeap<1>{ { value } });
 }
 
+// Convenience functions for heap construction.
 // Builds a heap from a non-empty list of values (there's no such thing as an empty heap)
 template <int X, int... Xs>
 BinomialHeap<1 + sizeof...(Xs)> makeHeap() {
@@ -146,10 +182,22 @@ BinomialHeap<1 + sizeof...(Xs)> makeHeap() {
         return insert(makeHeap<Xs...>(), X);
     }
 }
+
+// Builds a heap from a non-empty integer sequence
+template <int X, int... Xs>
+BinomialHeap<1 + sizeof...(Xs)> makeHeap(std::integer_sequence<int, X, Xs...>) {
+    return makeHeap<X, Xs...>();
+}
+
+// Builds a heap, containing the first N integers
+template <int N>
+BinomialHeap<N> makeHeapS() { return makeHeap(std::make_integer_sequence<int, N>{}); }
 } // namespace Meta
 
 // Stream output - for heap visualization.
-// Example: std::cout << Meta::makeHeap<2,5,3,4,6,1>() << "\n";
+// Example:
+//  std::cout << Meta::makeHeap<2,5,3,4,6,1>() << "\n";
+//  std::cout << Meta::makeHeapS<7>() << "\n";
 template <unsigned Rank>
 std::ostream& operator<<(std::ostream&, const Meta::BinomialTree<Rank>&);
 
