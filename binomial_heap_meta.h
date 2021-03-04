@@ -7,10 +7,16 @@
 // Implementation of binomial heaps, parameterized by their size.
 // Since template arguments should be resolved at compilation time,
 // only heaps of a static size, known at compilation, can be constructed.
+// (but the values need not be known at compile time).
 // Everything can therefore be constexpr, but specifiers are omitted for brevity.
 // On a positive note, when the types contain all the information, the structure
 // is as space efficient as possible - sizeof(BinomialHeap<N>) == N*sizeof(int)
 // (on compilers where [[no_unique_address]] is supported).
+// Important note regarding performance: for _simplicity_ all structures
+// (trees/arrays/heaps) directly contain their sub-trees/heaps/arrays, instead of referring
+// to them by pointer. This makes struct initialization/copying/moving actually O(n) (!)
+// The code here should be taken as a minimalistic proof of concept (and correctness).
+
 namespace Meta {
 // Array of binomial trees with decreasing ranks in [Rank..0]
 template <unsigned Rank>
