@@ -78,7 +78,7 @@ BinomialTree<Rank + 1> mergeTrees(const BinomialTree<Rank>& lhs, const BinomialT
 template <unsigned N>
 struct BinomialHeap;
 
-// Empty binomial heap - useful only as a base case for the reursive definition.
+// Empty binomial heap - useful only as a base case for the recursive definition.
 template <>
 struct BinomialHeap<0> {
     static constexpr unsigned Size = 0;
@@ -86,10 +86,13 @@ struct BinomialHeap<0> {
     static int getMin() { return INT_MAX; }
 };
 
+// When t is the last heap in the array (<=> N is a power of 2), ts is the empty heap. Being an
+// empty struct, it should not contribute to the total heap size, so [[no_unique_address]] is added
+// as a guarantee for this. It otherwise has no effect on non-empty structs, i.e. non-empty heaps.
 template <unsigned N>
 struct BinomialHeap {
     BinomialTree<std::countr_zero(N)> t; // countr_zero returns the index of N's lowest bit
-    [[no_unique_address]] // Empty heaps are empty structs & should not increase sizeof(Heap) (!)
+    [[no_unique_address]]
     BinomialHeap<N & (N - 1)> ts; // this removes N's lowest bit
 
     static constexpr unsigned Size = N;
@@ -194,7 +197,7 @@ BinomialHeap<N> makeHeapS() { return makeHeap(std::make_integer_sequence<int, N>
 } // namespace Meta
 
 // Stream output - for heap visualization.
-// Example:
+// Examples:
 //  std::cout << Meta::makeHeap<2,5,3,4,6,1>() << "\n";
 //  std::cout << Meta::makeHeapS<7>() << "\n";
 template <unsigned Rank>
