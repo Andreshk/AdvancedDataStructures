@@ -1,7 +1,8 @@
 #pragma once
 #include <iostream> // for visualization
 #include <bit> // std::countr_zero
-#include <utility> // std::integer_sequence
+#include <utility> // std::integer_sequence, std::pair
+#include <array>
 
 // Implementation of binomial heaps, parameterized by their size.
 // Since template arguments should be resolved at compilation time,
@@ -176,6 +177,76 @@ BinomialHeap<N + 1> insert(const BinomialHeap<N>& bh, const int value) {
 template <unsigned N>
 BinomialHeap<N + 1> operator+(const BinomialHeap<N>& bh, const int value) {
     return insert(bh, value);
+}
+
+// Helper function for construction of a heap from a binomial tree's children.
+// This basically reverses the list of children into another list of the result's subtrees.
+template <unsigned Rank, unsigned N>
+BinomialHeap<(2u << Rank) - 1 + N> mergeChildren(const BinomialTreeArray<Rank>& bta, BinomialHeap<N>&& res) {
+    if constexpr (Rank == 0) {
+        return { bta.t, res }; // this is the last tree in the array
+    } else {
+        constexpr unsigned TSize = decltype(bta.t)::Size;
+        return mergeChildren(bta.ts, BinomialHeap<TSize + N>{ bta.t, res });
+    }
+}
+
+// Removes a binomial tree's root & returns the heap, formed by merging its subtrees (if any).
+template <unsigned Rank>
+BinomialHeap<(1u << Rank) - 1> removeRoot(const BinomialTree<Rank>& bt) {
+    if constexpr (Rank == 0) {
+        return BinomialHeap<0>{};
+    } else {
+        return mergeChildren(bt.subtrees, BinomialHeap<0>{});
+    }
+}
+
+// Helper function for extracting the minimum value from a heap. Traverses the tree list
+// & inserts the trees before the one with the min one by one into the result.
+template <unsigned N> requires (N > 0)
+BinomialHeap<N - 1> extractMinHelper(const BinomialHeap<N>& bh, const int min) {
+    // this prevents instantiation with N == 0 in the else-clause below
+    if constexpr (decltype(bh.ts)::Size == 0) {
+        vassert(bh.t.value == min);
+        return removeRoot(bh.t);
+    } else {
+        if (bh.t.value == min) {
+            return merge(removeRoot(bh.t), bh.ts);
+        } else {
+            return insert(extractMinHelper(bh.ts, min), bh.t);
+        }
+    }
+}
+
+// Which tree in the heap has the minimum in its root is only known
+// at runtime. This means we cannot know the size of the heap, formed
+// by merging its subtrees - it is required during compilation for
+// template instantiation. So, we fallback to a slower algorithm.
+template <unsigned N> requires (N > 0)
+std::pair<int, BinomialHeap<N - 1>> extractMin(const BinomialHeap<N>& bh) {
+    const int min = bh.getMin();
+    return { min, extractMinHelper(bh, min) };
+}
+
+// Helper recursive function for outputting a heap's value into a sorted array
+template <unsigned N>
+void toArrayHelper(const BinomialHeap<N>& bh, int* const res) {
+    if constexpr (N == 0) {
+        return;
+    } else {
+        const auto [min, bh1] = extractMin(bh);
+        *res = min;
+        toArrayHelper(bh1, res + 1);
+    }
+}
+
+// Returns the sorted array, formed by extracting all values
+// from a heap one by one with extractMin.
+template <unsigned N>
+std::array<int, N> toArray(const BinomialHeap<N>& bh) {
+    std::array<int, N> res = {};
+    toArrayHelper(bh, &res[0]);
+    return res;
 }
 
 // Convenience functions for heap construction.
