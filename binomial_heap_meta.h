@@ -1,6 +1,6 @@
 #pragma once
 #include <iostream> // for visualization
-#include <bit> // std::countr_zero, std::has_single_bit
+#include <bit> // std::countr_zero
 #include <utility> // std::integer_sequence
 
 // Implementation of binomial heaps, parameterized by their size.
@@ -8,7 +8,8 @@
 // only heaps of a static size, known at compilation, can be constructed.
 // Everything can therefore be constexpr, but specifiers are omitted for brevity.
 // On a positive note, when the types contain all the information, the structure
-// is as space efficient as possible - sizeof(BinomialHeap<N>) == N*sizeof(int).
+// is as space efficient as possible - sizeof(BinomialHeap<N>) == N*sizeof(int)
+// (on compilers where [[no_unique_address]] is supported).
 namespace Meta {
 // Array of binomial trees with decreasing ranks in [Rank..0]
 template <unsigned Rank>
@@ -74,24 +75,21 @@ BinomialTree<Rank + 1> mergeTrees(const BinomialTree<Rank>& lhs, const BinomialT
 
 // A binomial heap of size N is also a (recursively defined) array of
 // binomial trees with increasing ranks, corresponding to each bit of N.
-template <unsigned N, bool = std::has_single_bit(N)>
+template <unsigned N>
 struct BinomialHeap;
 
-// The base case, therefore, is for a binomial heap whose size is a power of 2.
-// It will compose of a single binomial tree of rank logN.
-template <unsigned N>
-struct BinomialHeap<N, true> {
-    BinomialTree<std::countr_zero(N)> t;
-
-    static constexpr unsigned Size = N;
-    static_assert(Size == decltype(t)::Size);
-    int getMin() const { return t.value; } // can be constexpr, like everything else
-    bool valid() const { return t.valid(); }
+// Empty binomial heap - useful only as a base case for the reursive definition.
+template <>
+struct BinomialHeap<0> {
+    static constexpr unsigned Size = 0;
+    static bool valid() { return true; }
+    static int getMin() { return INT_MAX; }
 };
 
 template <unsigned N>
-struct BinomialHeap<N, false> {
+struct BinomialHeap {
     BinomialTree<std::countr_zero(N)> t; // countr_zero returns the index of N's lowest bit
+    [[no_unique_address]] // Empty heaps are empty structs & should not increase sizeof(Heap) (!)
     BinomialHeap<N & (N - 1)> ts; // this removes N's lowest bit
 
     static constexpr unsigned Size = N;
@@ -104,65 +102,64 @@ struct BinomialHeap<N, false> {
 // Standard algorithm of inserting a value in an ordered list.
 template <unsigned N, unsigned Rank>
 BinomialHeap<N + (1u << Rank)> insert(const BinomialHeap<N>& bh, const BinomialTree<Rank>& bt) {
-    if constexpr (Rank < std::countr_zero(N)) { // Rank of the first tree in the heap
+    if constexpr (N == 0) {
+        return { bt };
+    } else if constexpr (Rank < std::countr_zero(N)) { // Rank of the first tree in the heap
         return { bt, bh };
-    } else if constexpr (Rank > std::countr_zero(N)) {
-        if constexpr (std::has_single_bit(N)) { // <=> BinomialHeap base case
-            return { bh.t, {bt} };
-        } else {
-            return { bh.t, insert(bh.ts, bt) };
-        }
+    } else if constexpr (Rank == std::countr_zero(N)) {
+        return insert(bh.ts, mergeTrees(bh.t, bt));
     } else {
-        if constexpr (std::has_single_bit(N)) { // <=> BinomialHeap base case
-            return { mergeTrees(bh.t, bt) };
-        } else {
-            return insert(bh.ts, mergeTrees(bh.t, bt));
-        }
+        return { bh.t, insert(bh.ts, bt) };
     }
 }
 
-// Binomial heap merge. Should be optimal.
+// Forward declaration
+template <unsigned Rank, unsigned N, unsigned N1>
+BinomialHeap<N + N1 + (1u << Rank)>
+    mergeWithCarry(const BinomialTree<Rank>&, const BinomialHeap<N>&, const BinomialHeap<N1>&);
+
+// Optimal* binomial heap merge.
 // If the heaps correspond to lists of binomial trees, ordered by rank, this executes
 // the classical merge algorithm, but combining same-ranked trees into one of the next rank.
 template <unsigned N, unsigned N1>
 BinomialHeap<N + N1> merge(const BinomialHeap<N>& lhs, const BinomialHeap<N1>& rhs) {
-    // The ranks of the heaps' first trees
-    constexpr unsigned R = std::countr_zero(N);
-    constexpr unsigned R1 = std::countr_zero(N1);
-    if constexpr (R < R1) {
-        if constexpr (std::has_single_bit(N)) {
-            return { lhs.t, rhs };
-        } else {
-            return { lhs.t, merge(lhs.ts, rhs) };
-        }
-    } else if constexpr (R > R1) {
-        return merge(rhs, lhs); // symmetrical case
+    if constexpr (N == 0) {
+        return rhs;
+    } else if constexpr (N1 == 0) {
+        return lhs;
     } else {
-        // There can be no two trees of the same rank in the result => merge into a tree
-        // of the next rank. It corresponds to having a carry bit when adding N + N1.
-        const BinomialTree<R + 1> carry = mergeTrees(lhs.t, rhs.t);
-        constexpr unsigned R1N = (1u << (R + 1));
-        if constexpr (std::has_single_bit(N) && std::has_single_bit(N1)) {
-            // No more bits
-            return { carry };
-        } else if constexpr (std::has_single_bit(N)) {
-            // Only rhs has remaining bits => replace the empty remainder of lhs with the carry
-            return merge(BinomialHeap<R1N>{ carry }, rhs.ts);
-        } else if constexpr (std::has_single_bit(N1)) {
-            // Symmetrical case
-            return merge(lhs.ts, BinomialHeap<R1N>{ carry });
+        // The ranks of the heaps' first trees
+        constexpr unsigned R = std::countr_zero(N);
+        constexpr unsigned R1 = std::countr_zero(N1);
+        if constexpr (R < R1) {
+            return { lhs.t, merge(lhs.ts, rhs) };
+        } else if constexpr (R > R1) {
+            return { rhs.t, merge(rhs.ts, lhs) };
         } else {
-            // We can now have >1 tree with the same rank as the carry.
-            // If so, insert the carry into either lhs or rhs before recursing.
-            if constexpr (R + 1 == std::countr_zero(decltype(lhs.ts)::Size)) { // lhs.ts already has the carry bit
-                return merge(insert(lhs.ts, carry), rhs.ts);
-            } else if constexpr (R + 1 == std::countr_zero(decltype(rhs.ts)::Size)) {
-                return merge(lhs.ts, insert(rhs.ts, carry));
-            } else {
-                // No problem, just add the carry bit to the results
-                return { carry, merge(lhs.ts, rhs.ts) };
-            }
+            // There can be no two trees of the same rank in the result => merge into a tree
+            // of the next rank. It corresponds to having a carry bit when adding N + N1.
+            return mergeWithCarry(mergeTrees(lhs.t, rhs.t), lhs.ts, rhs.ts);
         }
+    }
+}
+
+// Merges two binomial heaps while also adding a tree, formed by merging two same-ranked trees
+// earlier during the merge. This corresponds to adding N+N1 while also having a "carry" bit at index Rank.
+template <unsigned Rank, unsigned N, unsigned N1>
+BinomialHeap<N + N1 + (1u << Rank)>
+    mergeWithCarry(const BinomialTree<Rank>& carry, const BinomialHeap<N>& lhs, const BinomialHeap<N1>& rhs)
+{
+    if constexpr (N == 0) { // No more bits => just insert the accumulated carry into what's left from rhs
+        return insert(rhs, carry);
+    } else if constexpr (N1 == 0) { // Symmetrical case
+        return insert(lhs, carry);
+    } else if constexpr (Rank == std::countr_zero(N)) {
+        // There are still >1 trees of the same rank => merge them & continue carrying over
+        return mergeWithCarry(mergeTrees(carry, lhs.t), lhs.ts, rhs);
+    } else if constexpr (Rank == std::countr_zero(N1)) { // Symmetrical case
+        return mergeWithCarry(mergeTrees(carry, rhs.t), lhs, rhs.ts);
+    } else { // Place carry bit here & continue ordinary merge
+        return { carry, merge(lhs, rhs) };
     }
 }
 
@@ -172,21 +169,23 @@ BinomialHeap<N + 1> insert(const BinomialHeap<N>& bh, const int value) {
     return merge(bh, BinomialHeap<1>{ { value } });
 }
 
+// Shorthand operator for inserting a value in a binomial heap.
+template <unsigned N>
+BinomialHeap<N + 1> operator+(const BinomialHeap<N>& bh, const int value) {
+    return insert(bh, value);
+}
+
 // Convenience functions for heap construction.
 // Builds a heap from a non-empty list of values (there's no such thing as an empty heap)
-template <int X, int... Xs>
-BinomialHeap<1 + sizeof...(Xs)> makeHeap() {
-    if constexpr (sizeof...(Xs) == 0) {
-        return { {X} };
-    } else {
-        return insert(makeHeap<Xs...>(), X);
-    }
+template <int... Xs>
+BinomialHeap<sizeof...(Xs)> makeHeap() {
+    return (BinomialHeap<0>{} + ... + Xs);
 }
 
 // Builds a heap from a non-empty integer sequence
-template <int X, int... Xs>
-BinomialHeap<1 + sizeof...(Xs)> makeHeap(std::integer_sequence<int, X, Xs...>) {
-    return makeHeap<X, Xs...>();
+template <int... Xs>
+BinomialHeap<sizeof...(Xs)> makeHeap(std::integer_sequence<int, Xs...>) {
+    return makeHeap<Xs...>();
 }
 
 // Builds a heap, containing the first N integers
@@ -221,8 +220,8 @@ std::ostream& operator<<(std::ostream& os, const Meta::BinomialTree<Rank>& bt) {
 
 template <unsigned N>
 std::ostream& operator<<(std::ostream& os, const Meta::BinomialHeap<N>& bh) {
-    if constexpr (std::has_single_bit(N)) {
-        return (os << bh.t);
+    if constexpr (N == 0) {
+        return os;
     } else {
         return (os << bh.t << ' ' << bh.ts);
     }
