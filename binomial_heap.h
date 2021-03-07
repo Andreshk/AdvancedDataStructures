@@ -83,17 +83,17 @@ struct BinomialTreeList {
     // Note: use this instead of manual member manipulation
     // Orphans the first binomial tree from a given heap (to prepare for merging) and
     // advances the heap pointer and corresponding size. Returns pointer to the orphaned tree.
-    Node<T>* advance() {
-        Node<T>* old = first;
-        advancePtr();
+    Node<T>* removeFirst() {
+        Node<T>* res = first;
+        advance();
         if (first) {
             first->prev = nullptr;
         }
-        old->next = nullptr;
-        return old;
+        res->next = nullptr;
+        return res;
     }
     // Advances the heap pointer & updates the size correspondingly. Does not destroy links between nodes.
-    void advancePtr() {
+    void advance() {
         first = first->next;
         size &= (size - 1);
     }
@@ -137,15 +137,15 @@ class BinomialHeap {
             vassert(carryRank <= lhsRank && carryRank <= rhsRank);
             // If there are still >1 trees with the same rank => merge them to continue "carrying over"
             if (carryRank == lhsRank && carryRank == rhsRank) {
-                Node<T>* newCarry = mergeTrees(lhs.advance(), rhs.advance());
+                Node<T>* newCarry = mergeTrees(lhs.removeFirst(), rhs.removeFirst());
                 carry->next = mergeWithCarry(carry, newCarry, carryRank + 1, lhs, rhs);
                 carry->prev = prev;
                 return carry;
             } else if (carryRank == lhsRank) {
-                carry = mergeTrees(carry, lhs.advance());
+                carry = mergeTrees(carry, lhs.removeFirst());
                 ++carryRank;
             } else if (carryRank == rhsRank) {
-                carry = mergeTrees(carry, rhs.advance());
+                carry = mergeTrees(carry, rhs.removeFirst());
                 ++carryRank;
             } else {
                 // otherwise, just "place" carry bit here & continue normally
@@ -158,7 +158,7 @@ class BinomialHeap {
         BinomialTreeList<T>& rest = (lhs ? lhs : rhs);
         while (rest && carryRank == rest.getRank()) {
             vassert(carry->getRank() == carryRank);
-            carry = mergeTrees(carry, rest.advance());
+            carry = mergeTrees(carry, rest.removeFirst());
             ++carryRank;
         }
         vassert(rest.size == 0 || carryRank < rest.getRank());
@@ -176,23 +176,36 @@ class BinomialHeap {
         vassert(!(lhs.first && lhs.first->prev) && !(rhs.first && rhs.first->prev));
         if (!lhs || !rhs) {
             Node<T>* res = (lhs ? lhs.first : rhs.first);
-            res->prev = prev;
+            if (res) {
+                res->prev = prev;
+            }
             return res;
         }
         const int lhsRank = lhs.getRank();
         const int rhsRank = rhs.getRank();
         vassert(lhsRank == lhs.first->getRank() && rhsRank == rhs.first->getRank());
         if (lhsRank != rhsRank) {
-            Node<T>* newFirst = (lhsRank < rhsRank ? lhs.advance() : rhs.advance());
+            Node<T>* newFirst = (lhsRank < rhsRank ? lhs.removeFirst() : rhs.removeFirst());
             newFirst->next = mergeHeaps(newFirst, lhs, rhs);
             newFirst->prev = prev;
             return newFirst;
         } else {
             // We cannot have two trees of the same rank -> merge them, forming a "carry" tree,
             // corresponding to having a carry bit while adding the binary numbers lhsSize & rhsSize.
-            Node<T>* carry = mergeTrees(lhs.advance(), rhs.advance());
+            Node<T>* carry = mergeTrees(lhs.removeFirst(), rhs.removeFirst());
             return mergeWithCarry(prev, carry, lhsRank + 1, lhs, rhs);
         }
+    }
+    BinomialTreeList<T> getMinHelper() const {
+        BinomialTreeList<T> res = trees;
+        BinomialTreeList<T> curr = res; curr.advance();
+        while (curr) {
+            if (curr.first->value < res.first->value) {
+                res = curr;
+            }
+            curr.advance();
+        }
+        return res;
     }
 public:
     // Standard big 6
@@ -208,12 +221,11 @@ public:
         return *this;
     }
     BinomialHeap(BinomialHeap&& other) noexcept
-        : trees{ std::exchange(other.trees.first, nullptr), std::exchange(other.trees.size, 0) } {}
+        : trees{ std::exchange(other.trees, BinomialTreeList<T>{ nullptr, 0 }) } {}
     BinomialHeap& operator=(BinomialHeap&& other) noexcept {
         if (this != &other) {
             Node<T>::deepFree(trees.first);
-            trees.first = std::exchange(other.trees.first, nullptr);
-            trees.size = std::exchange(other.trees.size, 0);
+            trees = std::exchange(other.trees, BinomialTreeList<T>{ nullptr, 0 });
         }
         return *this;
     }
@@ -224,13 +236,7 @@ public:
     // to-do: return minPointer->value;
     const T& getMin() const {
         vassert(trees.first); // Can not call this on an empty tree
-        Node<T>* res = trees.first;
-        for (Node<T>* curr = trees.first->next; curr; curr = curr->next) {
-            if (curr->value < res->value) {
-                res = curr;
-            }
-        }
-        return res->value;
+        return getMinHelper().first->value;
     }
     // to-do: return a proxy, suitable for decreaseKey()
     void insert(const T& value) {
@@ -245,6 +251,46 @@ public:
         }
         ++trees.size;
     }
+    // Remove the minimum value form the heap
+    T extractMin() {
+        BinomialTreeList<T> min = getMinHelper();
+        T res = std::move(min.first->value);
+        // Remove this tree from the list
+        if (min.first->prev) {
+            min.first->prev->next = min.first->next;
+            min.first->prev = nullptr;
+        } else {
+            vassert(min.first == trees.first);
+            trees.first = min.first->next;
+        }
+        if (min.first->next) {
+            min.first->next->prev = min.first->prev;
+            min.first->next = nullptr;
+        }
+        // Reverse the min root's children into a self-sufficient tree list
+        Node<T>* children = nullptr;
+        Node<T>* curr = min.first->firstChild;
+        while (curr) {
+            curr->parent = nullptr;
+            Node<T>* next = std::exchange(curr->next, nullptr);
+            curr->prev = nullptr; // can be removed; required only for the last
+            curr->next = children;
+            if (children) {
+                children->prev = curr;
+            }
+            children = curr;
+            curr = next;
+        }
+        // We can now free this
+        delete min.first;
+        // Merge the two (sizes should be correct for this step)
+        const int minRank = min.getRank();
+        const uint64_t numChildren = (uint64_t(1) << minRank) - 1;
+        trees.size -= (numChildren + 1);
+        trees.first = mergeHeaps(nullptr, trees, { children, numChildren });
+        trees.size += numChildren;
+        return res;
+    }
     // Merge another heap into this one & leave the other one empty (hence, the rvalue reference)
     void merge(BinomialHeap&& other) {
         if (!other.trees.first) { // Nothing to do
@@ -258,6 +304,9 @@ public:
             other.trees = { nullptr, 0 };
         }
     }
+    // Number of values in the heap
+    uint64_t size() const { return trees.size; }
+    bool empty() const { return !trees; }
     // Swap heap contents with another
     void swap(BinomialHeap& other) {
         std::swap(trees, other.trees);
@@ -271,7 +320,7 @@ public:
                 vassert(copy.first->prev == prev);
                 copy.first->validate(copy.getRank(), nullptr, prev);
                 prev = copy.first;
-                copy.advancePtr();
+                copy.advance();
             }
         }
     }
