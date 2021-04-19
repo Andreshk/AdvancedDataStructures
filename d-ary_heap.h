@@ -30,9 +30,9 @@ class d_heap {
                 return res;
             }
         } else {
-            // rightmost existing child
-            const size_t r = std::min(lastChildIdx(idx), data.size() - 1);
-            for (size_t i = res + 1; i <= r; i++) {
+            // one after the rightmost existing child
+            const size_t r = std::min(lastChildIdx(idx), data.size());
+            for (size_t i = res + 1; i < r; i++) {
                 if (comp(data[i], data[res])) {
                     res = i;
                 }
