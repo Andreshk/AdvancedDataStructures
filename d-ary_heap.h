@@ -1,126 +1,139 @@
 #pragma once
 #include <vector>
+#include <bit>          // std::bit_floor
+#include <ranges>       // std::ranges::input_range
 #include <cstddef>      // size_t
 #include <algorithm>    // std::min
 #include <functional>   // std::less
-#include <type_traits>  // std::is_nothrow_swappable
+#include "vassert.h"
 
 template<class T, size_t D, class Compare = std::less<T>>
-class d_heap
-{
-    static_assert(D >= 2, "d-ary heaps must have degree D not less than 2!");
-    // Unfortunately false for std::less<T> for trivial types...
-    static constexpr bool is_nothrow_comparable
-        = noexcept(std::declval<Compare>()(std::declval<T>(),std::declval<T>()));
-    static constexpr bool nothrow_comp_and_swap
-        = std::is_nothrow_swappable_v<T> && is_nothrow_comparable;
-
+    requires (D >= 2) // Tree degree cannot be 1 or 0...
+class d_heap {
     std::vector<T> data;
     Compare comp;
 
-    static size_t parentIdx(size_t idx) noexcept { return (idx - 1) / D; }
-    static size_t leftmostChildIdx(size_t idx) noexcept { return D*idx + 1; }
-    static size_t rightmostChildIdx(size_t idx) noexcept { return D*idx + D; }
-    size_t minChildIdx(size_t idx) const noexcept(is_nothrow_comparable)
-    {
-        // Edge case handling (e.g. D == 2 or D == 4) may not lead to benefits...
-        // Invariant: idx has at least one child
-        size_t res = leftmostChildIdx(idx);
-        // actual rightmost child
-        const size_t r = std::min(rightmostChildIdx(idx), data.size() - 1);
-        for (size_t i = res + 1; i <= r; i++)
-            if (comp(data[i], data[res]))
-                res = i;
-        return res;
+    // Parent/children index manipulation.
+    // Note: first & last make a half-closed interval, i.e. [first;last) (!)
+    static size_t     parentIdx(const size_t idx) { return (idx - 1) / D; }
+    static size_t firstChildIdx(const size_t idx) { return D*idx + 1; }
+    static size_t  lastChildIdx(const size_t idx) { return D*idx + D; }
+    // Find the index of the smallest child for a given node
+    size_t minChildIdx(const size_t idx) const {
+        size_t res = firstChildIdx(idx);
+        vassert(res < data.size()); // given node should have at least one child
+        if constexpr (D == 2) {
+            // Only one other child to check for existence & optimality
+            if (res + 1 < data.size() && comp(data[res + 1], data[res])) {
+                return res + 1;
+            } else {
+                return res;
+            }
+        } else {
+            // rightmost existing child
+            const size_t r = std::min(lastChildIdx(idx), data.size() - 1);
+            for (size_t i = res + 1; i <= r; i++) {
+                if (comp(data[i], data[res])) {
+                    res = i;
+                }
+            }
+            return res;
+        }
     }
-
-    void bubbleUp() noexcept(nothrow_comp_and_swap)
-    {
+    // Bubble up a value at the last index of the array
+    void bubbleUp() {
         using std::swap;
         size_t idx = data.size() - 1;
-        while (idx)
-        {
+        while (idx) {
             size_t pIdx = parentIdx(idx);
-            if (!comp(data[idx], data[pIdx]))
+            if (!comp(data[idx], data[pIdx])) {
                 return;
+            }
             swap(data[idx], data[pIdx]);
             idx = pIdx;
         }
     }
-    void bubbleDown(size_t idx = 0) noexcept(nothrow_comp_and_swap)
-    {
+    // Bubble down a value at a given index
+    void bubbleDown(size_t idx = 0) {
         using std::swap;
-        while (leftmostChildIdx(idx) < data.size()) // is leaf <=> no children
-        {
+        while (firstChildIdx(idx) < data.size()) { // is leaf <=> no children
             size_t minIdx = minChildIdx(idx);
-            if (comp(data[idx], data[minIdx]))
+            if (comp(data[idx], data[minIdx])) {
                 return;
+            }
             swap(data[idx], data[minIdx]);
             idx = minIdx;
         }
     }
 
-public:
-    d_heap(const std::vector<T>& data = std::vector<T>{},
-        const Compare& comp = Compare{})
-        : data{ data }, comp{ comp }
-    {
-        // building the heap in linear time: call bubbleDown for all non-leaf indices
-        const size_t n = size();
-        if (n < 2)
-            return;
-        // finding the index of the first leaf is basically the same
-        // as finding the largest k such that the sum d^0+d^1+...+d^k < n.
-        size_t sum = 1, prevSum = 0, nextV = D;
-        while (sum < n)
-        {
-            prevSum = sum;
-            sum += nextV;
-            nextV *= D;
+    // Finding the index of the first leaf is basically the same
+    // as finding the largest k such that the sum d^0+d^1+...+d^k < n.
+    static size_t findFirstLeaf(const size_t n) {
+        if constexpr (D == 2) {
+            return (std::bit_floor(n) - 1);
+        } else {
+            size_t sum = 1, prevSum = 0, nextV = D;
+            while (sum < n) {
+                prevSum = sum;
+                sum += nextV;
+                nextV *= D;
+            }
+            return prevSum;
         }
-        const size_t firstLeaf = prevSum;
-        for (size_t i = firstLeaf - 1; i < firstLeaf; i--) // we need i>=0
+    }
+
+    // Constructs a valid heap from a possibly invalid (f.e. currently constructed)
+    // one by calling bubbleDown for all non-leaf indices. This takes O(n) total time.
+    void bubbleDownNonChildren() {
+        const size_t n = size();
+        if (n < 2) {
+            return;
+        }
+        const size_t firstLeaf = findFirstLeaf(n);
+        for (size_t i = firstLeaf - 1; i < firstLeaf; i--) { // we need i>=0, but stupid unsigned ints...
             bubbleDown(i);
+        }
+    }
+public:
+    template <std::ranges::input_range R>
+    d_heap(R&& data = R{}, const Compare& comp = Compare{})
+        : data{ std::forward<R>(data) }, comp{ comp }
+    {
+        bubbleDownNonChildren();
     }
 
-    const T&   top() const          { return data.front(); }
-    bool     empty() const noexcept { return data.empty(); }
-    size_t    size() const noexcept { return data.size(); }
+    // Standard interface
+    const T& top() const { return data.front(); }
+    bool   empty() const { return data.empty(); }
+    size_t  size() const { return data.size(); }
 
-    void push(const T& val)
-    {
-        emplace(val);
-    }
-    void push(T&& val)
-    {
-        emplace(std::move(val));
-    }
+    // Insert a single value into the heap
+    void push(const T& val) { emplace(val); }
+    void push(T&& val) { emplace(std::move(val)); }
     template<class... Args>
-    void emplace(Args&&... args)
-    {
+    void emplace(Args&&... args) {
         data.emplace_back(std::forward<Args>(args)...);
         bubbleUp();
     }
 
-    void pop()
-    {
+    // Remove the smallest value from the heap
+    // Note: doesn't return it, similar to std::priority_queue - use top() beforehand.
+    void pop() {
         using std::swap;
         swap(data.front(), data.back());
         data.pop_back();
         bubbleDown();
     }
 
-    void swap(d_heap& other) noexcept(noexcept(swap(data, other.data)) && noexcept(swap(comp, other.comp)))
-    {
-        using std::swap;
-        swap(data, other.data);
-        swap(comp, other.comp);
+    // Attempts replacing the smallest element with one that's larger
+    // than it & returns true on success. Note: no reallocations.
+    bool tryReplaceTop(const T& newTop) {
+        if (!comp(newTop, data.front())) {
+            data.front() = newTop;
+            bubbleDown();
+            return true;
+        } else {
+            return false;
+        }
     }
 };
-
-template<class T, size_t D, class Compare>
-void swap(d_heap<T, D, Compare>& lhs,
-          d_heap<T, D, Compare>& rhs) noexcept(noexcept(lhs.swap(rhs)))
-{
-    lhs.swap(rhs);
-}
