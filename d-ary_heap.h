@@ -1,20 +1,20 @@
 #pragma once
 #include <vector>
 #include <bit>          // std::bit_floor
-#include <ranges>       // std::ranges::input_range
 #include <cstddef>      // size_t
+#include <iterator>     // std::input_iterator
 #include <algorithm>    // std::min
 #include <functional>   // std::less
+#include <utility>      // std::swap
 #include "vassert.h"
 
-template<class T, size_t D, class Compare = std::less<T>>
+template<typename T, size_t D, typename Compare = std::less<T>>
     requires (D >= 2) // Tree degree cannot be 1 or 0...
-class d_heap {
+class DHeap {
     std::vector<T> data;
     Compare comp;
 
     // Parent/children index manipulation.
-    // Note: first & last make a half-closed interval, i.e. [first;last) (!)
     static size_t     parentIdx(const size_t idx) { return (idx - 1) / D; }
     static size_t firstChildIdx(const size_t idx) { return D*idx + 1; }
     static size_t  lastChildIdx(const size_t idx) { return D*idx + D; }
@@ -31,8 +31,8 @@ class d_heap {
             }
         } else {
             // one after the rightmost existing child
-            const size_t r = std::min(lastChildIdx(idx), data.size());
-            for (size_t i = res + 1; i < r; i++) {
+            const size_t r = std::min(lastChildIdx(idx), data.size() - 1);
+            for (size_t i = res + 1; i <= r; i++) {
                 if (comp(data[i], data[res])) {
                     res = i;
                 }
@@ -58,11 +58,12 @@ class d_heap {
         using std::swap;
         while (firstChildIdx(idx) < data.size()) { // is leaf <=> no children
             size_t minIdx = minChildIdx(idx);
-            if (comp(data[idx], data[minIdx])) {
+            if (comp(data[minIdx], data[idx])) {
+                swap(data[minIdx], data[idx]);
+                idx = minIdx;
+            } else {
                 return;
             }
-            swap(data[idx], data[minIdx]);
-            idx = minIdx;
         }
     }
 
@@ -95,9 +96,9 @@ class d_heap {
         }
     }
 public:
-    template <std::ranges::input_range R>
-    d_heap(R&& data = R{}, const Compare& comp = Compare{})
-        : data{ std::forward<R>(data) }, comp{ comp }
+    template <std::input_iterator InputIt>
+    DHeap(InputIt from, InputIt to, const Compare& comp = Compare{})
+        : data{ from, to }, comp{ comp }
     {
         bubbleDownNonChildren();
     }
@@ -110,7 +111,7 @@ public:
     // Insert a single value into the heap
     void push(const T& val) { emplace(val); }
     void push(T&& val) { emplace(std::move(val)); }
-    template<class... Args>
+    template <class... Args>
     void emplace(Args&&... args) {
         data.emplace_back(std::forward<Args>(args)...);
         bubbleUp();
@@ -137,3 +138,13 @@ public:
         }
     }
 };
+
+// Some aliases for ease-of-use
+template <typename T, typename Compare = std::less<T>>
+using BinaryHeap = DHeap<T, 2, Compare>;
+
+template <typename T, typename Compare = std::less<T>>
+using QuadHeap = DHeap<T, 4, Compare>;
+
+template <typename T, typename Compare = std::less<T>>
+using OctHeap = DHeap<T, 8, Compare>;
