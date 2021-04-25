@@ -29,6 +29,12 @@ struct Node {
     static Node* recursivePairwiseMerge(Node*, Compare&);
     template <typename Compare>
     static Node* iterativePairwiseMerge(Node*, Compare&);
+    // Remove the root node of a tree & merge its children
+    template <typename Compare>
+    static T extractMin(Node*&, size_t&, Compare&, bool);
+    // Decrease the key in a given node with a smaller value
+    template <typename Compare>
+    static void decreaseKey(Node*, Node*&, const T&, Compare&);
 };
 
 template <typename T, typename Compare = std::less<T>>
@@ -197,6 +203,57 @@ Node<T>* Node<T>::iterativePairwiseMerge(Node* first, Compare& cmp) {
     return last;
 }
 
+template <typename T>
+template <typename Compare>
+T Node<T>::extractMin(Node*& root, size_t& count, Compare& cmp, bool shouldDelete) {
+    // Save the root's value & leftChild before freeing the node
+    const T result = root->value;
+    Node<T>* first = std::exchange(root->leftChild, nullptr);
+    if (shouldDelete) {
+        delete root;
+    }
+    root = nullptr;
+    // If no children, nothing else to do
+    if (first) {
+        first->predecessor = nullptr;
+        // Merge children in pairs & the pairs back-to-front, recursively or iteratively
+        if constexpr (useRecursivePairwiseMerge) {
+            root = recursivePairwiseMerge(first, cmp);
+        } else {
+            root = iterativePairwiseMerge(first, cmp);
+        }
+    }
+    vassert(!(root && (root->predecessor || root->rightSibling)));
+    --count;
+    return result;
+}
+
+template <typename T>
+template <typename Compare>
+void Node<T>::decreaseKey(Node* location, Node*& root, const T& newKey, Compare& cmp) {
+    // Update the value
+    vassert(cmp(newKey, location->value)); // No point otherwise
+    location->value = newKey;
+    // If the value is at the root (<=> no predecessor), nothing more to change
+    if (location == root) {
+        return;
+    }
+    // Tell its left sibling/parent it has a new right sibling/left child
+    if (location == location->predecessor->rightSibling) {
+        location->predecessor->rightSibling = location->rightSibling;
+    } else {
+        location->predecessor->leftChild = location->rightSibling;
+    }
+    // Tell its right sibling (if any) it has a new left sibling
+    if (location->rightSibling) {
+        location->rightSibling->predecessor = location->predecessor;
+    }
+    // Isolate the current node as a root of a new heap
+    location->rightSibling = location->predecessor = nullptr;
+    // Merge this heap back into the remainder
+    root = Node<T>::merge(root, location, cmp);
+}
+
 template <typename T, typename Compare>
 void PairingHeap<T, Compare>::copyFrom(const PairingHeap& other) {
     vassert(!root);
@@ -227,7 +284,7 @@ template <typename T, typename Compare>
 void PairingHeap<T, Compare>::merge(PairingHeap&& other) {
     // Some edge cases are handled way earlier
     if (this == &other || other.empty()) {
-        // nothing to do
+        return; // nothing to do
     } else if (empty()) {
         std::swap(*this, other);
     } else {
@@ -240,7 +297,7 @@ void PairingHeap<T, Compare>::merge(PairingHeap&& other) {
 
 template <typename T, typename Compare>
 auto PairingHeap<T, Compare>::insert(const T& value) -> proxy {
-    // Simple: make a new heap and merge it
+    // Simple: make a new singleton heap and merge it
     Node<T>* res = new Node<T>(value);
     root = (count == 0 ? res : Node<T>::merge(root, res, cmp));
     ++count;
@@ -249,24 +306,7 @@ auto PairingHeap<T, Compare>::insert(const T& value) -> proxy {
 
 template <typename T, typename Compare>
 T PairingHeap<T, Compare>::extractMin() {
-    // Save the root's value & leftChild before freeing the node
-    const T result = peek();
-    Node<T>* first = root->leftChild;
-    delete root;
-    root = nullptr;
-    // If no children, nothing else to do
-    if (first) {
-        first->predecessor = nullptr;
-        // Merge children in pairs & the pairs back-to-front, recursively or iteratively
-        if constexpr (useRecursivePairwiseMerge) {
-            root = Node<T>::recursivePairwiseMerge(first, cmp);
-        } else {
-            root = Node<T>::iterativePairwiseMerge(first, cmp);
-        }
-    }
-    vassert(!(root && (root->predecessor || root->rightSibling)));
-    --count;
-    return result;
+    return Node<T>::extractMin(root, count, cmp, true);
 }
 
 template <typename T, typename Compare>
@@ -274,29 +314,10 @@ bool PairingHeap<T, Compare>::decreaseKey(proxy pr, const T& newKey) {
     // If the proxy does not point to a node in this heap -> undefined behaviour(!)
     if (!cmp(newKey, *pr)) {
         return false;
-    }
-    // Update the value
-    Node<T>* location = pr.ptr;
-    location->value = newKey;
-    // If the value is at the root (<=> no predecessor), nothing more to change
-    if (location == root) {
+    } else {
+        Node<T>::decreaseKey(pr.ptr, root, newKey, cmp);
         return true;
     }
-    // Tell its left sibling/parent it has a new right sibling/left child
-    if (location == location->predecessor->rightSibling) {
-        location->predecessor->rightSibling = location->rightSibling;
-    } else {
-        location->predecessor->leftChild = location->rightSibling;
-    }
-    // Tell its right sibling (if any) it has a new left sibling
-    if (location->rightSibling) {
-        location->rightSibling->predecessor = location->predecessor;
-    }
-    // Isolate the current node as a root of a new heap
-    location->rightSibling = location->predecessor = nullptr;
-    // Merge this heap back into the remainder
-    root = Node<T>::merge(root, location, cmp);
-    return true;
 }
 
 template <typename T, typename Compare>
