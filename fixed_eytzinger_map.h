@@ -46,7 +46,7 @@ public:
 
     static_assert(std::is_nothrow_move_constructible_v<key_type>);
     static_assert(std::is_nothrow_move_constructible_v<mapped_type>);
-    static_assert(std::random_access_iterator<iterator>); // Bonus: usual set/màp iterators are "just" bidirectional
+    static_assert(std::random_access_iterator<iterator>); // Bonus: usual set/map iterators are "just" bidirectional
     //static_assert(std::random_access_iterator<const_iterator>); // to-do
 private:
     key_type* keys;
@@ -166,53 +166,53 @@ struct FixedEytzingerMap<Key, Value, Compare>::IteratorImpl {
 public:
     using iterator_category = std::contiguous_iterator_tag;
     using iterator_concept  = std::contiguous_iterator_tag;
-	using difference_type   = ptrdiff_t;
-	using value_type        = std::pair<Key, Value2>;
-	using pointer           = PairPtrWrapper<isConst>;
-	using reference         = std::pair<const Key&, Value2&>;
+    using difference_type   = ptrdiff_t;
+    using value_type        = std::pair<Key, Value2>;
+    using pointer           = PairPtrWrapper<isConst>;
+    using reference         = std::pair<const Key&, Value2&>;
 
-	IteratorImpl() noexcept : k(nullptr), v(nullptr) {}
-	reference operator*() const noexcept { return { *k, *v }; }
-	pointer operator->() const noexcept { return { k, v }; }
-	reference operator[](difference_type n) const noexcept { return *(*this + n); }
-	IteratorImpl& operator++() noexcept {
-		++k; ++v;
+    IteratorImpl() noexcept : k(nullptr), v(nullptr) {}
+    reference operator*() const noexcept { return { *k, *v }; }
+    pointer operator->() const noexcept { return { k, v }; }
+    reference operator[](difference_type n) const noexcept { return *(*this + n); }
+    IteratorImpl& operator++() noexcept {
+        ++k; ++v;
         return *this;
-	}
-	IteratorImpl operator++(int) noexcept {
+    }
+    IteratorImpl operator++(int) noexcept {
         IteratorImpl res{ *this };
         ++(*this);
         return res;
-	}
-	IteratorImpl& operator--() noexcept {
-		--k; --v;
+    }
+    IteratorImpl& operator--() noexcept {
+        --k; --v;
         return *this;
-	}
-	IteratorImpl operator--(int) noexcept {
+    }
+    IteratorImpl operator--(int) noexcept {
         IteratorImpl res{ *this };
         --(*this);
         return res;
-	}
-	IteratorImpl& operator+=(difference_type diff) noexcept {
-		k += diff; v += diff;
+    }
+    IteratorImpl& operator+=(difference_type diff) noexcept {
+        k += diff; v += diff;
         return *this;
-	}
-	IteratorImpl& operator-=(difference_type diff) noexcept {
-		k -= diff; v -= diff;
+    }
+    IteratorImpl& operator-=(difference_type diff) noexcept {
+        k -= diff; v -= diff;
         return *this;
-	}
+    }
     IteratorImpl operator+(difference_type diff) const noexcept {
         return (IteratorImpl{ *this } += diff);
     }
-    friend IteratorImpl operator+(difference_type diff, const IteratorImpl &it) {
+    friend IteratorImpl operator+(difference_type diff, const IteratorImpl &it) noexcept {
         return (it + diff);
     }
-	IteratorImpl operator-(difference_type diff) const noexcept {
+    IteratorImpl operator-(difference_type diff) const noexcept {
         return (IteratorImpl{ *this } -= diff);
-	}
-	difference_type operator-(const IteratorImpl& rhs) const noexcept { return (k - rhs.k); }
-	bool operator==(const IteratorImpl& rhs) const noexcept { return (k == rhs.k); }
-	auto operator<=>(const IteratorImpl& rhs) const noexcept { return (k <=> rhs.k); }
+    }
+    difference_type operator-(const IteratorImpl& rhs) const noexcept { return (k - rhs.k); }
+    bool operator==(const IteratorImpl& rhs) const noexcept { return (k == rhs.k); }
+    auto operator<=>(const IteratorImpl& rhs) const noexcept { return (k <=> rhs.k); }
 };
 
 template <typename Key, typename Value, typename Compare>
@@ -241,7 +241,7 @@ FixedEytzingerMap<Key, Value, Compare>::FixedEytzingerMap(FixedEytzingerMap&& ot
 template <typename Key, typename Value, typename Compare>
 FixedEytzingerMap<Key, Value, Compare>::FixedEytzingerMap(const FixedEytzingerMap& other) : FixedEytzingerMap(other.comp) {
     allocateUninitialized(other.count_);
-    // If some copy constructor throw, the previously constructed keys/values will be destroyed safely
+    // If some copy constructor throws, the previously constructed keys/values will be destroyed safely
     Key *last_key = keys;
     Value *last_value = values;
     try {
@@ -258,7 +258,7 @@ FixedEytzingerMap<Key, Value, Compare>::FixedEytzingerMap(const FixedEytzingerMa
         for (Value* it = values; it < last_value; ++it) {
             it->~Value();
         }
-		deallocateUninitialized();
+        deallocateUninitialized();
         std::rethrow_exception(std::current_exception());
     }
 }
@@ -341,7 +341,7 @@ template <typename Key, typename Value, typename Compare>
 FixedEytzingerMap<Key, Value, Compare>::~FixedEytzingerMap() {
     static_assert(std::ranges::random_access_range<FixedEytzingerMap>); // Bonus: usual set/map-s are "just" bidirectional
     destroyAll();
-	deallocateUninitialized();
+    deallocateUninitialized();
 }
 
 template <typename Key, typename Value, typename Compare>
@@ -354,7 +354,7 @@ void FixedEytzingerMap<Key, Value, Compare>::allocateUninitialized(const size_t 
         keys = static_cast<Key*>(::operator new(count * sizeof(Key), std::align_val_t(alignof(Key))));
         values = static_cast<Value*>(::operator new(count * sizeof(Value), std::align_val_t(alignof(Value))));
     } catch (...) {
-		deallocateUninitialized();
+        deallocateUninitialized();
         std::rethrow_exception(std::current_exception());
     }
 }
@@ -388,19 +388,19 @@ void FixedEytzingerMap<Key, Value, Compare>::buildTree(const size_t idx, std::ve
         return;
     }
     // Left subtree
-	buildTree(2 * idx + 1, it);
+    buildTree(2 * idx + 1, it);
     // Root node (be it a leaf or not)
     ::new((void*)(keys + idx)) Key(std::move(it->first)); // cast to void* to avoid suspicious overloads
     ::new((void*)(values + idx)) Value(std::move(it->second)); // these obv rely on the memory being uninitialized
     ++it;
     // Right subtree
-	buildTree(2 * idx + 2, it);
+    buildTree(2 * idx + 2, it);
 }
 
 template <typename Key, typename Value, typename Compare>
 void FixedEytzingerMap<Key, Value, Compare>::clear() noexcept {
     destroyAll();
-	deallocateUninitialized();
+    deallocateUninitialized();
 }
 
 template <typename Key, typename Value, typename Compare>
