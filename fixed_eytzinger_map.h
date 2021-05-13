@@ -164,8 +164,9 @@ struct FixedEytzingerMap<Key, Value, Compare>::IteratorImpl {
 
     IteratorImpl(const Key *k, Value2 *v) noexcept : k(k), v(v) {} // Only a map can construct iterators to itself
 public:
-    using iterator_category = std::contiguous_iterator_tag;
-    using iterator_concept  = std::contiguous_iterator_tag;
+    // Note: can't be a contiguous iterator, since keys & values are stored separately, so dereferencing returns a proxy object.
+    using iterator_category = std::random_access_iterator_tag;
+    using iterator_concept  = std::random_access_iterator_tag;
     using difference_type   = ptrdiff_t;
     using value_type        = std::pair<Key, Value2>;
     using pointer           = PairPtrWrapper<isConst>;
@@ -265,7 +266,7 @@ FixedEytzingerMap<Key, Value, Compare>::FixedEytzingerMap(const FixedEytzingerMa
 
 template <typename Key, typename Value, typename Compare>
 FixedEytzingerMap<Key, Value, Compare>::FixedEytzingerMap(std::initializer_list<value_type> l, const Compare& comp) : FixedEytzingerMap(comp) {
-    std::vector<value_type> t{ std::begin(l), std::end(l) };
+    std::vector<value_type> t{ l };
     std::sort(t.begin(), t.end(), [this](const value_type& v1, const value_type& v2) {
         return this->comp(v1.first, v2.first);
     });
@@ -283,7 +284,7 @@ template <typename Key, typename Value, typename Compare>
 template <CanConstructPairsOf<Key, Value> It>
 FixedEytzingerMap<Key, Value, Compare>::FixedEytzingerMap(It from, It to, const Compare& comp) : FixedEytzingerMap(comp) {
     std::vector<value_type> t{ from, to };
-    std::sort(std::begin(t), std::end(t), [this](const value_type& v1, const value_type& v2) {
+    std::sort(t.begin(), t.end(), [this](const value_type& v1, const value_type& v2) {
         return this->comp(v1.first, v2.first);
     });
     t.erase(std::unique(t.begin(), t.end(), [this](const value_type& v1, const value_type& v2){
