@@ -1,218 +1,252 @@
 #pragma once
-#include <iostream> // printing & debugging purposes
+#include <bit> // std::bit_width
 #include <array>
 #include <vector>
+#include <limits> // std::numeric_limits::max
 #include <cstdint>  // uint{32,64}_t
 #include <cstddef>  // size_t
-#include <optional> // std::optional
-#include <type_traits>   // std::is_unsigned
-#include <unordered_map> // will be replaced with our no-collision hashing
+#include <utility>  // std::exchange
+#include <concepts> // std::unsigned_integral
+#include <optional>
+#include <unordered_map>
+#include "vassert.h"
 
-// The helper mathematical & bitwise-operation functions can be found at the bottom of this file.
+#ifdef XFAST_DEBUG_PRINT
+#include <iostream> // printing & debugging purposes
+#endif // XFAST_DEBUG_PRINT
 
-template <typename value_t = uint64_t>
-class x_fast_trie {
-    static_assert(std::is_unsigned<value_t>::value,
-        "Willard's algorithm works only on unsigned integral types!");
+// Forward declarations of minor helper functions
+template <std::unsigned_integral Value>
+int maxBitWidth(const std::vector<Value>&);
+template <std::unsigned_integral Value>
+Value reverseBits(Value, const int);
 
+template <std::unsigned_integral Value = uint64_t>
+class XFastTrie {
     // This is allowed to have an arbitrary underlying type and will not be
-    // intermixed with value_t in the code - they simply have different semantics.
+    // intermixed with Value in the code - they simply have different semantics.
     // Of course, this type limits the number of values contained.
-    using idx_t = uint32_t;
-    // Code cleanliness -> code godliness
-    using pair_t = std::array<idx_t, 2>;
-    using hashmap_t = std::unordered_map<value_t, pair_t>;
-    // Placeholder function, will be replaced with a construction of our custom no-collision hashmap
-    static hashmap_t make_hash(const std::vector<value_t>& level, const std::vector<idx_t> nodes) {
-        hashmap_t hash;
-        for (size_t i = 0; i < level.size(); ++i)
-            hash.emplace(level[i], pair_t{ nodes[i], invalid_idx });
-        return hash;
-    }
-    // For code clarity, expected to get inlined away (and also get replaced in our custom hashmap)
-    static bool exists_in(const hashmap_t& hash, value_t val) {
-        return (hash.find(val) != hash.end());
-    }
+    using Idx = int;
+    using Pair = std::array<Idx, 2>;
+    using HashMap = std::unordered_map<Value, Pair>;
 
-    // Every node contains the indices of the values, corresponding
+    // Every Node contains the indices of the values, corresponding
     // to its left- and rightmost leaf in the temporary trie.
-    static constexpr idx_t root_idx = 0;
-    static constexpr idx_t invalid_idx = ~idx_t{ 0 };
-    static constexpr idx_t max_size = invalid_idx / 2;
-    static bool is_invalid(idx_t idx) { return (idx == invalid_idx); }
-    struct node {
-        idx_t children[2];
-        node() : children{ invalid_idx,invalid_idx } {};
+    static constexpr Idx invalidIdx = -1;
+    static constexpr Idx maxSize = std::numeric_limits<Idx>::max() / 2;
+    static bool isInvalid(const Idx idx) { return (idx == invalidIdx); }
+    struct Node {
+        Idx children[2];
+        Node() : children{ invalidIdx,invalidIdx } {};
     };
 
-    std::vector<value_t> values;   // the values contained, in sorted order
-    std::vector<hashmap_t> levels; // for every trie level, a hashmap to pairs of leaf indices
-    const size_t bits;             // = ceil(log2(U)), where U is the maximum in values
+    std::vector<Value>   values; // the values contained, in sorted order
+    std::vector<HashMap> levels; // for every trie level, a hashmap to pairs of leaf indices
+    int bits;                    // the number of bits, required to represent the biggest value
 
     // Insert a value in the temporary trie, represented by the nodes array
-    void trie_insert(std::vector<node>& nodes, const value_t val) {
+    void trieInsert(std::vector<Node>& nodes, const Value val) {
         // Reverse the "significant" bits for easier access
-        value_t rval = reverse_bits(val, bits);
-        size_t rest_bits = bits;
-        idx_t curr_idx = 0;
+        Value rval = reverseBits(val, bits);
+        int restBits = bits;
+        Idx currIdx = 0;
         // Navigate common prefix in tree
         while (true) {
-            idx_t child_idx = nodes[curr_idx].children[rval & 1];
-            if (is_invalid(child_idx))
+            Idx childIdx = nodes[currIdx].children[rval & 1];
+            if (isInvalid(childIdx)) {
                 break;
-            curr_idx = child_idx;
+            }
+            currIdx = childIdx;
             rval >>= 1;
-            --rest_bits;
+            --restBits;
         }
         // Add the rest of the bits
-        while (rest_bits) {
+        while (restBits) {
             nodes.emplace_back(); // an empty node
-            idx_t last_idx = idx_t(nodes.size() - 1);
-            nodes[curr_idx].children[rval & 1] = last_idx;
-            curr_idx = last_idx;
+            Idx lastIdx = Idx(nodes.size()) - 1;
+            nodes[currIdx].children[rval & 1] = lastIdx;
+            currIdx = lastIdx;
             rval >>= 1;
-            --rest_bits;
+            --restBits;
         }
-    }
-
-    // Updates a level in the trie, using previously-allocated buffers for calculations
-    void update_level(const std::vector<node>& nodes
-        , std::vector<value_t>& curr_level, std::vector<idx_t>& curr_nodes
-        , std::vector<value_t>& level_buffer, std::vector<idx_t>& nodes_buffer) {
-        for (size_t i = 0; i < curr_nodes.size(); ++i) {
-            for (size_t pos = 0; pos < 2; ++pos) { // unroll this pls
-                idx_t child_idx = nodes[curr_nodes[i]].children[pos];
-                if (!is_invalid(child_idx)) {
-                    level_buffer.push_back(2 * curr_level[i] + pos);
-                    nodes_buffer.push_back(child_idx);
-                }
-            }
-        }
-        std::swap(curr_nodes, nodes_buffer);
-        std::swap(curr_level, level_buffer);
-        // Fun fact: clear() almost always keeps the vector capacity,
-        // so level updating should cause no reallocations.
-        nodes_buffer.clear();
-        level_buffer.clear();
     }
     
     // The crux of Willard's algorithm
-    std::optional<value_t> find(value_t x, bool succ) const {
-        if (empty())
-            return {};
-        using result_t = std::optional<value_t>;
+    std::optional<Value> find(const Value x, const bool succ) const {
+        const std::optional<Value> none{ std::nullopt };
+        if (empty()) {
+            return none;
+        }
         // Do not search for values outside of the range
-        if (x > values.back())
-            return (succ ? result_t{} : result_t{ values.back() });
-        if (x < values.front())
-            return (succ ? result_t{ values.front() } : result_t{});
+        if (x > values.back()) {
+            return (succ ? none : values.back());
+        } else if (x < values.front()) {
+            return (succ ? values.front() : none);
+        }
         // This also catches the corner cases of the last value's
         // successor and the first value's predeccessor.
-        if (exists_in(levels.back(), x))
-            return { x };
+        if (levels.back().contains(x)) {
+            return x;
+        }
         // Find the longest matching prefix of the searched value
         // by binary searching through the trie levels
-        size_t l = 0, r = bits;
+        int l = 0, r = bits;
         while (r - l > 1) {
-            const size_t m = (r + l) / 2;
-            const size_t i = bits - m;
-            if (exists_in(levels[m], x >> i))
+            const int m = (l + r) / 2;
+            const int i = bits - m;
+            if (levels[m].contains(x >> i)) {
                 l = m;
-            else
+            } else {
                 r = m;
+            }
         }
-        // xsplit == kappa(longest matching prefix)
-        const value_t xsplit = x >> (bits - l);
+        // xSplit == longest matching prefix
+        const Value xSplit = x >> (bits - l);
         // The contents of the "splitting" node, i.e. its value indices
-        const pair_t& arr = levels[l].at(xsplit);
+        const Pair& arr = levels[l].at(xSplit);
         // Now do some more magic to save a couple of branches...
         static const int index[] = { -1,1 };
         // For starters, we check where this node has a left or a right
         // child node (we know there is exactly one) by another hashmap lookup
-        if (exists_in(levels[l + 1], 2 * xsplit + succ))
-            return { values[arr[!succ]] };
-        else
-            return { values[arr[succ] + index[succ]] };
+        if (levels[l + 1].contains(2 * xSplit + succ)) {
+            return values[arr[!succ]];
+        } else {
+            return values[arr[succ] + index[succ]];
+        }
     }
 public:
     // Here be magic
-    x_fast_trie(const std::vector<value_t>& _values) : bits{ max_bit_length(_values) } {
+    XFastTrie(const std::vector<Value>& values) : bits{ maxBitWidth(values) } {
         // Very, very unlikely...
-        if (_values.empty() || _values.size() >= max_size)
+        if (values.empty() || values.size() >= maxSize) {
             return;
-        const size_t n = _values.size();
-        // The final node count is expected to be around 2n. The trie is
+        }
+        const size_t n = values.size();
+        // The final Node count is expected to be around 2n. The trie is
         // actually a temporary structure, needed only at initialization!
-        std::vector<node> nodes{ 1,node{} }; // there's always a root node
+        std::vector<Node> nodes{ 1,Node{} }; // there's always a root Node
         nodes.reserve(2 * n);
         // First build the trie...
-        for (auto val : _values)
-            trie_insert(nodes, val);
+        for (auto val : values) {
+            trieInsert(nodes, val);
+        }
         // ...then save its levels in an array of hashmaps.
         levels.reserve(bits + 1);
         // Level by level, including the root and the leaves...
-        // Invariant: at any iteration curr_level.size() == curr_nodes.size()
-        // curr_level contains prefixes and curr_nodes the indices
+        // currLevel contains prefixes and currNodes the indices
         // of the respective nodes. Buffers will be used as buffers.
-        std::vector<value_t> curr_level{ 0 }, level_buffer;
-        std::vector<idx_t> curr_nodes{ root_idx }, nodes_buffer;
-        level_buffer.reserve(n);
-        nodes_buffer.reserve(n);
-        for (size_t b = 0; b < bits; ++b) {
-            // In the beginning, the hashmaps map a prefix value to its trie node
-            levels.push_back(make_hash(curr_level, curr_nodes));
-            update_level(nodes, curr_level, curr_nodes, level_buffer, nodes_buffer);
+        std::vector<Value> currLevel{ 0 }, levelBuff;
+        std::vector<Idx> currNodes{ 0 /*root idx*/ }, nodesBuff;
+        levelBuff.reserve(n);
+        nodesBuff.reserve(n);
+        // Builds a new hashmap from the values in the current level & adds it to the array
+        auto makeLevelHash = [this, &currLevel, &currNodes]() {
+            vassert(currLevel.size() == currNodes.size());
+            HashMap& hash = levels.emplace_back();
+            for (size_t i = 0; i < currLevel.size(); ++i) {
+                hash.emplace(currLevel[i], Pair{ currNodes[i], invalidIdx });
+            }
+        };
+        for (int b = 0; b < bits; ++b) {
+            // In the beginning, the hashmaps map a prefix value to its trie Node
+            makeLevelHash();
+            // Update to the next level
+            for (size_t i = 0; i < currNodes.size(); ++i) {
+                for (int pos = 0; pos < 2; ++pos) { // unroll this pls
+                    const Idx childIdx = nodes[currNodes[i]].children[pos];
+                    if (!isInvalid(childIdx)) {
+                        levelBuff.push_back(2 * currLevel[i] + pos);
+                        nodesBuff.push_back(childIdx);
+                    }
+                }
+            }
+            std::swap(currNodes, nodesBuff);
+            std::swap(currLevel, levelBuff);
+            // clear() almost always keeps the vector capacity,
+            // so level updating should cause no reallocations.
+            nodesBuff.clear();
+            levelBuff.clear();
         }
-        // Unfortunately, we also need the last level in a hashmap for quick lookup
-        levels.push_back(make_hash(curr_level, curr_nodes));
-        // Now all indices in curr_nodes point to the leaves, in sorted order...
-        values = curr_level;
-        for (size_t i = 0; i < curr_nodes.size(); ++i) {
-            node& node = nodes[curr_nodes[i]];
-            node.children[0] = idx_t(i);
-            node.children[1] = idx_t(i);
+        // Unfortunately, we also need the last level in a hashmap for quick lookups
+        makeLevelHash();
+        // Now all indices in currNodes point to the leaves, in sorted order
+        this->values = std::move(currLevel); // don't need this anymore
+        for (size_t i = 0; i < currNodes.size(); ++i) {
+            Node& node = nodes[currNodes[i]];
+            node.children[0] = Idx(i);
+            node.children[1] = Idx(i);
         }
         // Traverse the tree backwards, updating the value indices
-        // Until now, each node contains the indices of its two child nodes
-        for (size_t b = levels.size() - 2; b + 1 >= 1; --b) // no b>=0 check for unsigned b...
+        // Until now, each Node contains the indices of its two child nodes
+        vassert(levels.size() == bits + 1);
+        for (int b = bits - 1; b >= 0; --b) {
             for (const auto& p : levels[b]) {
-                node& node = nodes[p.second[0]];
-                // Child node indices (will be equal when node has an only child)
-                const idx_t left_idx = node.children[is_invalid(node.children[0])];
-                const idx_t right_idx = node.children[!is_invalid(node.children[1])];
+                Node& node = nodes[p.second[0]];
+                // Child Node indices (will be equal when Node has an only child)
+                const Idx left_idx = node.children[isInvalid(node.children[0])];
+                const Idx right_idx = node.children[!isInvalid(node.children[1])];
                 node.children[0] = nodes[left_idx].children[0];
                 node.children[1] = nodes[right_idx].children[1];
             }
-        // Now every node contains the indices of the values, corresponding to
-        // its left- and rightmost leaves, but the hashmaps still contain node indices.
-        // So we replace each node's index with its contents and discard the trie itself.
-        for (auto& hm : levels)
-            for (auto& p : hm) { // structured bindings do not work here
-                pair_t& arr = p.second;
-                const node& node = nodes[arr[0]];
+        }
+        // Now every Node contains the indices of the values, corresponding to
+        // its left- and rightmost leaves, but the hashmaps still contain Node indices.
+        // So we replace each Node's index with its contents and discard the trie itself.
+        for (HashMap& level : levels) {
+            for (auto& p : level) {
+                Pair& arr = p.second;
+                const Node& node = nodes[arr[0]];
                 arr[0] = node.children[0];
                 arr[1] = node.children[1];
             }
+        }
     }
+    XFastTrie(XFastTrie&& other) noexcept
+        : values{ std::move(other.values) }, levels{ std::move(other.levels) }, bits{ std::exchange(other.bits, 0) } {}
+    XFastTrie& operator=(XFastTrie&& other) noexcept {
+        if (this != &other) {
+            this->~XFastTrie();
+            new (this) XFastTrie(std::move(other)); // lol
+        }
+        return *this;
+    }
+    ~XFastTrie() { clear(); }
 
     // Finding the previous and next value are dual operations, after all.
-    std::optional<value_t> pred(value_t x) const { return find(x, false); }
-    std::optional<value_t> succ(value_t x) const { return find(x, true); }
+    std::optional<Value> pred(Value x) const { return find(x, false); }
+    std::optional<Value> succ(Value x) const { return find(x, true); }
 
     // Standard...
     size_t size() const noexcept { return values.size(); }
     bool empty() const noexcept { return values.empty(); }
+    void clear() noexcept {
+        std::exchange(values, {}); // Force deallocation
+        std::exchange(levels, {});
+        bits = 0;
+    }
 
+#ifdef XFAST_DEBUG_PRINT
     // Prints detailed trie information, incl. level hashmaps
     // and whether the leaves point to the correct values
     void print() const {
         std::cout << "Bits: " << bits << "\nValue count: " << size() << "\n";
-        if (size() > 50)
+        if (empty() || size() > 50) {
             return;
+        }
+        auto print_bits = [](const Value val, const int bits) {
+            std::cout << val << '[';
+            for (int i = bits - 1; i >= 0; --i) {
+                std::cout << ((val >> i) & 1 ? '1' : '0');
+            }
+            std::cout << ']';
+        };
         std::cout << "\nValues (sorted):\n";
-        for (auto x : values) { print_bits(x, bits); std::cout << "\n"; }
+        for (const Value x : values) {
+            print_bits(x, bits);
+            std::cout << "\n";
+        }
         std::cout << "\nHashes:\n";
-        for (size_t i = 0; i < levels.size(); ++i) {
+        for (int i = 0; i < int(levels.size()); ++i) {
             std::cout << "  Level " << i << "\n";
             for (const auto& [val, p] : levels[i]) {
                 std::cout << "val: "; print_bits(val, i);
@@ -222,67 +256,55 @@ public:
             }
         }
     }
+#endif // XFAST_DEBUG_PRINT
 };
 
-namespace { // Utilities
-    // Printing & debugging
-    template <typename value_t>
-    void print_bits(value_t val, size_t bits) {
-        std::cout << val << '[';
-        for (size_t i = bits - 1; i < bits; --i)
-            std::cout << ((val >> i) & 1 ? '1' : '0');
-        std::cout << ']';
-    }
-    // These two beg for vectorization
-    template <typename value_t>
-    size_t bit_length(value_t val) {
-        size_t result = 0;
-        while (val) {
-            val >>= 1;
-            ++result;
+// Utilities
+// This begs for vectorization
+template <std::unsigned_integral Value>
+int maxBitWidth(const std::vector<Value>& values) {
+    int result = 0;
+    for (const Value x : values) {
+        const int curr = int(std::bit_width(x));
+        if (result < curr) {
+            result = curr;
         }
-        return result;
     }
-    template <typename value_t>
-    size_t max_bit_length(const std::vector<value_t>& values) {
-        size_t result = 1;
-        for (auto x : values) {
-            size_t curr = bit_length(x);
-            if (result < curr)
-                result = curr;
-        }
-        return result;
-    }
+    return result;
+}
 
-    // There are other ways to flip bits, hopefully this one isn't too slow
-    uint8_t reverse_bits(uint8_t val, size_t bits) {
-        val = ((val >> 1) & 0x55ui8) | ((val & 0x55ui8) << 1);
-        val = ((val >> 2) & 0x33ui8) | ((val & 0x33ui8) << 2);
-        val = (val >> 4) | (val << 4);
-        return (val >> (8 - bits));
-    }
-    uint16_t reverse_bits(uint16_t val, size_t bits) {
-        val = ((val >> 1) & 0x5555ui16) | ((val & 0x5555ui16) << 1);
-        val = ((val >> 2) & 0x3333ui16) | ((val & 0x3333ui16) << 2);
-        val = ((val >> 4) & 0x0F0Fui16) | ((val & 0x0F0Fui16) << 4);
-        val = (val >> 8) | (val << 8);
-        return (val >> (16 - bits));
-    }
-    uint32_t reverse_bits(uint32_t val, size_t bits) {
-        val = ((val >> 1) & 0x5555'5555ui32) | ((val & 0x5555'5555ui32) << 1);
-        val = ((val >> 2) & 0x3333'3333ui32) | ((val & 0x3333'3333ui32) << 2);
-        val = ((val >> 4) & 0x0F0F'0F0Fui32) | ((val & 0x0F0F'0F0Fui32) << 4);
-        val = ((val >> 8) & 0x00FF'00FFui32) | ((val & 0x00FF'00FFui32) << 8);
-        val = (val >> 16) | (val << 16);
-        return (val >> (32 - bits));
-    }
-    uint64_t reverse_bits(uint64_t val, size_t bits) {
-        val = ((val >> 1) & 0x5555'5555'5555'5555ui64) | ((val & 0x5555'5555'5555'5555ui64) << 1);
-        val = ((val >> 2) & 0x3333'3333'3333'3333ui64) | ((val & 0x3333'3333'3333'3333ui64) << 2);
-        val = ((val >> 4) & 0x0F0F'0F0F'0F0F'0F0Fui64) | ((val & 0x0F0F'0F0F'0F0F'0F0Fui64) << 4);
-        val = ((val >> 8) & 0x00FF'00FF'00FF'00FFui64) | ((val & 0x00FF'00FF'00FF'00FFui64) << 8);
-        val = ((val >> 16) & 0x0000'FFFF'0000'FFFFui64) | ((val & 0x0000'FFFF'0000'FFFFui64) << 16);
-        val = (val >> 32) | (val << 32);
-        return (val >> (64 - bits));
-    }
+// There are other ways to flip bits, hopefully this one isn't too slow
+template <>
+uint8_t reverseBits(uint8_t val, const int bits) {
+    val = ((val >> 1) & 0x55ui8) | ((val & 0x55ui8) << 1);
+    val = ((val >> 2) & 0x33ui8) | ((val & 0x33ui8) << 2);
+    val = (val >> 4) | (val << 4);
+    return (val >> (8 - bits));
+}
+template <>
+uint16_t reverseBits(uint16_t val, const int bits) {
+    val = ((val >> 1) & 0x5555ui16) | ((val & 0x5555ui16) << 1);
+    val = ((val >> 2) & 0x3333ui16) | ((val & 0x3333ui16) << 2);
+    val = ((val >> 4) & 0x0F0Fui16) | ((val & 0x0F0Fui16) << 4);
+    val = (val >> 8) | (val << 8);
+    return (val >> (16 - bits));
+}
+template <>
+uint32_t reverseBits(uint32_t val, const int bits) {
+    val = ((val >> 1) & 0x5555'5555ui32) | ((val & 0x5555'5555ui32) << 1);
+    val = ((val >> 2) & 0x3333'3333ui32) | ((val & 0x3333'3333ui32) << 2);
+    val = ((val >> 4) & 0x0F0F'0F0Fui32) | ((val & 0x0F0F'0F0Fui32) << 4);
+    val = ((val >> 8) & 0x00FF'00FFui32) | ((val & 0x00FF'00FFui32) << 8);
+    val = (val >> 16) | (val << 16);
+    return (val >> (32 - bits));
+}
+template <>
+uint64_t reverseBits(uint64_t val, const int bits) {
+    val = ((val >> 1) & 0x5555'5555'5555'5555ui64) | ((val & 0x5555'5555'5555'5555ui64) << 1);
+    val = ((val >> 2) & 0x3333'3333'3333'3333ui64) | ((val & 0x3333'3333'3333'3333ui64) << 2);
+    val = ((val >> 4) & 0x0F0F'0F0F'0F0F'0F0Fui64) | ((val & 0x0F0F'0F0F'0F0F'0F0Fui64) << 4);
+    val = ((val >> 8) & 0x00FF'00FF'00FF'00FFui64) | ((val & 0x00FF'00FF'00FF'00FFui64) << 8);
+    val = ((val >> 16) & 0x0000'FFFF'0000'FFFFui64) | ((val & 0x0000'FFFF'0000'FFFFui64) << 16);
+    val = (val >> 32) | (val << 32);
+    return (val >> (64 - bits));
 }
