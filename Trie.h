@@ -1,12 +1,14 @@
 #pragma once
-#include <fmt/core.h> // testing purposes only
-#include <cppcoro/generator.hpp> // cppcoro::generator
 #include "TrieTraits.h"
+#include "TrieTraversal.h"
 
-#include <concepts> // std::unsigned_integral, std::same_as
+#include <concepts> // std::unsigned_integral
 #include <cstdint> // size_t
 #include <array>
 #include <bit> // std::bit_width, used for formatted output only
+
+// Forward declaration
+template <typename T> class CompressedTrie;
 
 // A trie node with N child nodes. Note that it doesn't depend on trie value type.
 template <size_t N>
@@ -35,7 +37,8 @@ struct Node {
 
 // A generic trie class, supporting all types with complete TrieTraits specializations
 template <typename T>
-class Trie {
+class Trie : public TrieTraversal<Trie, T> {
+	friend TrieTraversal<Trie, T>;
 	using Traits = TrieTraits<T>;
 	using Node = Node<Traits::numPointers>;
 
@@ -51,6 +54,10 @@ public:
 		return *this;
 	}
 	~Trie() { clear(); }
+	// Convenience ctor
+	Trie(std::initializer_list<T> il) : Trie{} {
+		for (const T& value : il) { insert(value); }
+	}
 	// Attempts to insert a value, returns false iff already inserted.
 	bool insert(T value) {
 		if constexpr (std::unsigned_integral<T>) {
@@ -75,14 +82,6 @@ public:
 			}
 		}
 		return inserted;
-	}
-	// Checks whether a value has been inserted
-	bool contains(T value) const noexcept(Traits::noexceptConsume) {
-		const Node* ptr = &root;
-		while (ptr && !Traits::consumed(value)) {
-			ptr = ptr->ptrs[Traits::advance(value)];
-		}
-		return (ptr && ptr->hasValue);
 	}
 	// Attempts to remove a value, return true iff found.
 	// Note: cannot update root.numBits in an efficient way, so it just doesn't touch it.
@@ -120,42 +119,6 @@ public:
 	size_t size() const noexcept { return root.count; }
 	bool empty() const noexcept { return (size() == 0); }
 
-	// Traverses the trie depth-first & returns each value found, keeping the path to the current node as the coroutine state.
-	cppcoro::generator<T> values() const noexcept(Traits::noexceptStack)  {
-		struct VisitState {
-			const Node* root; // (sub)tree root
-			size_t nextIdx; // Index of next subtree of root to be visited
-		};
-		// Stack of not-completely-visited subtrees (each with current visit progress)
-		using Stack = Traits::template Stack<VisitState>;
-		Stack path = {};
-		path.push({ &root, 0 });
-		// The value, "built" from the path from the root to the current node.
-		typename Traits::U temp = {};
-		while (true) {
-			auto& [curr, nextIdx] = path.top();
-			// Return the value only on the first node visit
-			if (nextIdx == 0 && curr->hasValue) {
-				co_yield Traits::fromTemporary(temp);
-			}
-			// Jump to next non-empty subtree
-			while (nextIdx < Traits::numPointers && !curr->ptrs[nextIdx]) {
-				++nextIdx;
-			}
-			if (nextIdx == Traits::numPointers) {
-				path.pop();
-				if (path.empty()) {
-					break; // We've popped the root, nothing more to do
-				}
-				Traits::pop(temp, path.size() - 1); // The stack top's depth
-			} else { // Push the next subtree to the stack
-				Traits::push(temp, nextIdx, path.size() - 1); // The stack top's depth
-				path.push({ curr->ptrs[nextIdx], 0 });
-				++nextIdx; // For when we return to the current depth back again - continue from the next subtree
-			}
-		}
-	}
-
 	// Clears all contents & resets to an empty trie
 	void clear() noexcept {
 		// Reminder not to delete &root - it's not dynamically allocated
@@ -167,65 +130,13 @@ public:
 			}
 		}
 	}
-	
-	// Simple demo for string insertion, search & removal
-	static void test() requires std::same_as<T, const char*> {
-		Trie<const char*> t;
-		int numInserted = 0;
-		for (const char* str : { "andi", "", "and", "andy", "baba" }) {
-			if (t.insert(str)) {
-				++numInserted;
-			}
-		}
-		fmt::print("numInserted={}\ncount={}\n", numInserted, t.size());
-		for (const char* str : t.values()) {
-			fmt::print("\"{}\"\n", str);
-		}
-		for (const char* str : { "", "andi", "andrey", "ba", "c" }) {
-			fmt::print("\"{}\" : {}\n", str, t.contains(str));
-		}
-		int numRemoved = 0;
-		for (const char* str : { "andi", "", "and", "andy", "baba" }) {
-			if (t.remove(str)) {
-				++numRemoved;
-			}
-		}
-		fmt::print("numRemoved={}\ncount={}\n", numRemoved, t.size());
-		for (const char* str : t.values()) {
-			fmt::print("\"{}\"\n", str);
-		}
-		fmt::print("\n");
-	}
-	// Simple demo for integer insertion, search & removal
-	static void test() requires std::unsigned_integral<T> {
-		Trie<T> t;
-		int numInserted = 0;
-		for (const T value : { 68, 20, 35, 32, 14, 0, 12, 20, 300, 0, 301, 420/*, -1, -2*/ }) {
-			if (t.insert(value)) {
-				++numInserted;
-			}
-		}
-		fmt::print("numInserted={}\n", numInserted);
-		fmt::print("count={} maxBits={}\n", t.size(), t.maxBits());
-		for (const T value : t.values()) {
-			// Print arg0 in binary, padding up to arg1 with zeroes; then print arg0 normally
-			fmt::print("{0:0{1}b} ({0})\n", value, t.maxBits());
-		}
-		for (const T value : { 0, 5, 12, 20, 28, 68, 420 }) {
-			fmt::print("{} : {}\n", value, t.contains(value));
-		}
-		int numRemoved = 0;
-		for (const T value : { 68, 20, 35, 32, 14, 0, 12, 20, 300, 0, 301, 420/*, -1, -2*/ }) {
-			if (t.remove(value)) {
-				++numRemoved;
-			}
-		}
-		fmt::print("numRemoved={}\n", numRemoved);
-		fmt::print("count={} maxBits={}\n", t.size(), t.maxBits());
-		for (const T value : t.values()) {
-			// Print arg0 in binary, padding up to arg1 with zeroes; then print arg0 normally
-			fmt::print("{0:0{1}b} ({0})\n", value, t.maxBits());
-		}
-		fmt::print("\n");
-	}
+private:
+	// Typedefs & member functions, required by the TrieTraversal methods
+	using pointer = const Node*;
+	pointer getRootPtr() const { return &root; }
+	static bool hasValue(const pointer p) { return p->hasValue; }
+	static bool hasChild(const pointer p, size_t idx) { return (p->ptrs[idx] != nullptr); }
+	static pointer getChild(const pointer p, size_t idx) { return p->ptrs[idx]; }
+	// (!)
+	friend CompressedTrie<T>;
 };
