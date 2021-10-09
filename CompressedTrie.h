@@ -1,8 +1,8 @@
 #pragma once
 #include "Trie.h"
 #include "TrieTraversal.h"
-#include "StaticBitset.h"
-#include "..\..\CharSet\CharSet\CharSet.h"
+#include "StaticBitset.h" // from SnippySnippets repo
+#include "CharSet.h" // from SnippySnippets repo
 #include <type_traits> // std::conditional_t
 #include <vector>
 #include <queue>
@@ -28,10 +28,10 @@ class CompressedTrie : public TrieTraversal<CompressedTrie, T> {
     std::vector<Bitset> bitsets;
     // For each node, the index of its first child node + 1 bit indicating whether the node has a value
     std::vector<unsigned> firstChild;
-    // Max # of bits of all values in tree. Used for unsigned integers only
-    size_t maxBits_ : 8;
     // # of values in tree. Used in the root node only.
-    size_t count : 56;
+    size_t count;
+    // Max # of bits of all values in tree. Used for unsigned integers only
+    int maxBits_;
 public:
     // Standard big 6
     CompressedTrie() : count{ 0 } {}
@@ -53,20 +53,21 @@ public:
     // Convenience ctor
     CompressedTrie(std::initializer_list<T> il) : CompressedTrie{ Trie<T>{il} } {}
     // (!)
-    [[nodiscard]] CompressedTrie(const Trie<T>& t) : count{ t.root.count }, maxBits_{ t.root.maxBits } {
+    [[nodiscard]] CompressedTrie(const Trie<T>& t) : count{ t.count }, maxBits_{ t.maxBits_ } {
         using Node = typename Trie<T>::Node;
-        std::queue<const Node*> q;
-        q.push(&t.root);
+        std::queue<uintptr_t> q;
+        q.push(Node::encode(&t.root, t.rootHasValue));
         unsigned nextIdx = 1;
         while (!q.empty()) {
-            const Node* node = q.front();
+            const uintptr_t node = q.front();
+            const Node* ptr = Node::decode(node);
             q.pop();
-            firstChild.push_back(nextIdx << 1 | unsigned(node->hasValue));
+            firstChild.push_back(nextIdx << 1 | unsigned(node & 1));
             Bitset curr{};
             for (size_t i = 0; i < Traits::numPointers; ++i) {
-                if (node->ptrs[i]) {
+                if (ptr->ptrs[i]) {
                     curr.add(Index(i));
-                    q.push(node->ptrs[i]);
+                    q.push(ptr->ptrs[i]);
                     ++nextIdx;
                 }
             }
