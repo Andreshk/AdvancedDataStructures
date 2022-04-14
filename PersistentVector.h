@@ -1,18 +1,19 @@
 #pragma once
 #include <array>
-#include <memory> // std::memset, std::memcpy
 #include <atomic>
 #include <cstdint> // size_t
 #include <type_traits> // std::is_trivial_v
-#include <cassert>
-#define vassert assert
+#include <iterator>
+#include <bit> // std::{has_single_bit, countr_zero}
 
 /* TO-DO:
+ * - maybe tails can be reused on push_back, rather than pop_back
+ *   => should tails be immediately inserted into the tree then?
  * - transient operations should do path copying when part of the path to the modified value
  *   is shared (i.e. ref-counter > 1) (!) => update the comments on transients afterwards
- * - add ctor from two random access iterators, that build a tree & memcpy's elements inside
- * - add support for non-trivial types via shared pointer (own or standard)
- *   => then pop_back() won't be able to reuse a tree node as a tail and should create a new one
+ * - add ctor from a range (maybe continuous?) that builds a tree & memcpy's elements inside
+ * x add support for non-trivial types via shared pointer (own or standard) - too much work...
+ *   => then tails couldn't be reused neither on pop_back(), nor push_back()
  */
 
  // Enable this for logging of node allocations & deallocations.
@@ -22,6 +23,12 @@
 #else
 #define DEBUG_ONLY(expr) ((void)0)
 #endif // ENABLE_NODECOUNTER
+
+// Calculate the number of values that fit in a leaf node (dependent on branching factor)
+template <typename T, size_t B>
+consteval size_t getL() {
+    return (B * sizeof(void*)) / sizeof(T);
+}
 
 /* PersistentVector is a tree with a large branching factor (usually 32), such that only
  * the leaf nodes contain values & every leaf node is the same distance from the root.
@@ -37,30 +44,18 @@
  *   const auto pv3 = pv2.push_back(123);
  *   make_transient(pv2).set(0,42); // pv2[0] = 42 -> no path copying, may cause pv3[0] == 42
  *   PersistentVector<int> pv4;
- *   for (int i = 0; i < 100; ++i)
+ *   for (int i = 0; i < 100; ++i) {
  *     make_transient(pv4).push_back(i); // no unneeded allocations (!)
+ *   }
  */
-template <typename T>
+template <typename T, size_t B = 32>
+    requires (std::is_trivial_v<T>   // Only trivial types can be contained - consider using pointers to T instead.
+           && std::has_single_bit(B) // Branch factor can only be a power of 2
+           && B >= 2 && B <= 256     // ...but not too small or too large
+           && getL<T, B>() >= 2)     // Values too large to fit in leaves - increase branch factor or store pointers.
 class PersistentVector {
-    static_assert(std::is_trivial_v<T>, // required(?) for the node construction/copying/destruction
-        "PersistentVector may contain only trivial types. Consider using pointers to T instead.");
-    // Calculate the logarithm of the number of values that fit in a leaf node (dependent on branching factor)
-    static constexpr size_t getL(const size_t numBranches) {
-        auto floorLog2 = [](size_t n) { // floor(log2(n))
-            size_t res = 0;
-            while (n > 1) { ++res; n >>= 1; }
-            return res;
-        };
-        return floorLog2((numBranches * sizeof(void*)) / sizeof(T));
-    }
-
-    static const size_t B = 5; // Logarithm of the branch factor
-    static const size_t numBranches     = 1 << B;
-    static const size_t L = getL(numBranches); // Logarithm of the number of values in a leaf
-    static const size_t numValuesInLeaf = 1 << L;
-    static_assert(B >= 1 && B <= 8);
-    static_assert(numValuesInLeaf >= 2,
-        "Values too large to fit in the leaf nodes - consider increasing B or using pointers to T.");
+    static const size_t logB = std::countr_zero(B); // Logarithm of the branch factor
+    static const size_t numValuesInLeaf = getL<T, B>();
 
     struct Node {
         std::atomic<size_t> refCount;
@@ -68,22 +63,26 @@ class PersistentVector {
             // The calculations above guarantee that these arrays are as close as possible
             // in size, i.e. there is (ideally) no space left unused in the nodes.
             // This works best when sizeof(T) is a power of 2.
-            std::array<Node*, numBranches> ptrs;
+            std::array<Node*, B> ptrs;
             std::array<T, numValuesInLeaf> values; 
         };
 
         Node() {
             DEBUG_ONLY(NodeCounter::add(this));
-            std::memset(this, 0, sizeof(*this));
+            ptrs.fill(nullptr);
             refCount = 1;
         }
         Node(const Node* other, const size_t height) {
             DEBUG_ONLY(NodeCounter::add(this));
-            std::memcpy(this, other, sizeof(*this));
             refCount = 1;
-            if (height > 0)
-                for (size_t i = 0; i < ptrs.size() && ptrs[i]; ++i)
+            if (height > 0) {
+                ptrs = other->ptrs;
+                for (size_t i = 0; i < ptrs.size() && ptrs[i]; ++i) {
                     ++ptrs[i]->refCount;
+                }
+            } else {
+                values = other->values;
+            }
         }
         Node(const Node&) = delete;
 
@@ -91,7 +90,7 @@ class PersistentVector {
         // and Node::release() before being assigned a new value or being destroyed.
         Node* acquire() {
             if (++refCount == 1) {
-                vassert(false && "Race condition: acquiring a node during its destruction!");
+                assert(false && "Race condition: acquiring a node during its destruction!");
             }
             return this;
         }
@@ -100,18 +99,20 @@ class PersistentVector {
             if (--refCount > 0)
                 return;
             if (height > 0) {
-                for (size_t i = 0; i < ptrs.size() && ptrs[i]; ++i)
+                for (size_t i = 0; i < ptrs.size() && ptrs[i]; ++i) {
                     ptrs[i]->release(height - 1);
+                }
             }
             DEBUG_ONLY(NodeCounter::remove(this));
             delete this;
         }
         // Find the last non-null pointer to a subtree
         size_t findLastSubtree() const {
-            vassert(ptrs[0] != nullptr);
+            assert(ptrs[0] != nullptr);
             size_t idx = ptrs.size() - 1;
-            while (idx > 0 && ptrs[idx] == nullptr)
+            while (idx > 0 && ptrs[idx] == nullptr) {
                 --idx;
+            }
             return idx;
         }
     };
@@ -126,9 +127,9 @@ class PersistentVector {
 
     // Given a value index, find the index of the pointer at a given level in the path to this value
     static size_t idxAtLevel(const size_t idx, const size_t height) {
-        vassert(height > 0 && "Use idx%numValuesInLeaf for value access at leaf nodes");
-        static const size_t branchMask = numBranches - 1; // Used during indexing operations
-        return ((idx >> ((height - 1)*B + L)) & branchMask);
+        assert(height > 0 && "Use idx%numValuesInLeaf for value access at leaf nodes");
+        static const size_t branchMask = B - 1; // Used during indexing operations
+        return (((idx / numValuesInLeaf) >> ((height - 1)*logB)) & branchMask);
     }
     // The number of elements, contained in the tree structure (i.e. excluding the tail)
     static size_t treeSize(const size_t n) {
@@ -138,7 +139,7 @@ class PersistentVector {
     }
     // The number of elements a full tree of a given height will contain
     static size_t fullTreeSize(const size_t height) {
-        return (size_t(1) << ((height)*B+L));
+        return (numValuesInLeaf << (height*logB));
     }
     // Check whether the element at a given index resides in the tail node
     bool insideTail(const size_t i) const {
@@ -146,7 +147,7 @@ class PersistentVector {
     }
     // Find the leaf node (this includes the tail), containing a given index
     Node* findLeaf(const size_t i, const size_t min_height = 0) const {
-        vassert(i <= n); // i == n is allowed only for end iterator construction
+        assert(i <= n); // i == n is allowed only for end iterator construction
         if (insideTail(i)) {
             return tail;
         } else { // Walk down the tree, rooted in currRoot, knowing its height is currH
@@ -161,14 +162,14 @@ class PersistentVector {
     }
     // Return a modifying reference to a value at a given index, so it could be used in transient and non-transient operations
     T& find(const size_t i) const {
-        vassert(i <= n); // i == n is allowed only for end iterator construction
+        assert(i <= n); // i == n is allowed only for end iterator construction
         return findLeaf(i)->values[i%numValuesInLeaf];
     }
     // Copy the path to a leaf, containing a given index in the tree, rooted in root. The last
     // parameter determines at which level the copying should be stopped (0 for leaf, 1 for a
     // leaf's parent). Also saves the address to the last copied node, for quicker access later.
     static Node* copyPath(const Node* root, const size_t height, Node*& lastNode, const size_t i, const size_t min_height = 0) {
-        vassert(root != nullptr);
+        assert(root != nullptr);
         Node* newRoot = new Node(root, height);
         if (height == min_height) {
             // The newly allocated node actually contains values, copied from root
@@ -197,8 +198,8 @@ class PersistentVector {
     // Insert (adopt) a leaf into a tree with a given root, height & value count. It is known
     // that the tree has space for one more leaf. newLeaf will be adopted as the inserted leaf.
     static Node* insertLeaf(const Node* root, Node* newLeaf, const size_t height, const size_t n) {
-        vassert(!hasFullSubtrees(n, height));
-        vassert((root == nullptr) == (height == 0));
+        assert(!hasFullSubtrees(n, height));
+        assert((root == nullptr) == (height == 0));
         if (height == 0)
             return newLeaf;
         Node* newRoot = new Node(root, height);
@@ -213,23 +214,23 @@ class PersistentVector {
         }
         return newRoot;
     }
-    // Check internal structure invariants. Should be no-op when assert is not defined (verified on Godbolt)
+    // Check internal structure invariants. No-op when assert is not defined
     void checkInvariants() const {
         if (n < numValuesInLeaf) {
-            vassert(root == nullptr && height == 0 && "Tree should be empty when all values can fit into the tail!");
+            assert(root == nullptr && height == 0 && "Tree should be empty when all values can fit into the tail!");
         } else if (height == 0) {
-            vassert(n < 2 * numValuesInLeaf && "The tail should not be full!");
+            assert(n < 2 * numValuesInLeaf && "The tail should not be full!");
         } else {
-            vassert(root->ptrs[1] != nullptr && "The root node should always have more than one child!");
+            assert(root->ptrs[1] != nullptr && "The root node should always have more than one child!");
             const size_t numLeaves = n / numValuesInLeaf;
-            vassert(numLeaves <= (fullTreeSize(height) / numValuesInLeaf) && "Tree too small - is the tail full?");
-            vassert(numLeaves > (fullTreeSize(height - 1) / numValuesInLeaf) && "Tree unnecessarily high!");
+            assert(numLeaves <= (fullTreeSize(height) / numValuesInLeaf) && "Tree too small - is the tail full?");
+            assert(numLeaves > (fullTreeSize(height - 1) / numValuesInLeaf) && "Tree unnecessarily high!");
         }
     }
     // Helper struct to guarantee invariant checking when exiting the transient methods.
     struct CheckInvariantsRAII {
         const PersistentVector& pv;
-        CheckInvariantsRAII(const PersistentVector& pv) : pv{ pv } {}
+        [[nodiscard]] CheckInvariantsRAII(const PersistentVector& pv) : pv{ pv } {}
         ~CheckInvariantsRAII() { pv.checkInvariants(); }
     };
     friend CheckInvariantsRAII;
@@ -239,52 +240,54 @@ class PersistentVector {
     { // This constructor should only take care of setting the members, without any ref-counting!
         checkInvariants();
     }
-    // Release the pointers and leave the tree in an uninitialzed state (!= default-constructed state)
-    void deinit() {
-        if (root)
-            root->release(height);
-        tail->release(0); // Usually tail->refCount == 1, but it can be shared on pop_back()
-        root = nullptr;
-        tail = nullptr;
-    }
 public:
     // The manual ref-counting requires non-default special member functions (big 6)
     PersistentVector() : PersistentVector(nullptr, new Node, 0, 0) {}
+    // Copying is O(1), just increase the refcounts
     PersistentVector(const PersistentVector& other)
-        : PersistentVector{ (other.root ? other.root->acquire() : nullptr),other.tail->acquire(),other.height,other.n } {}
-    PersistentVector(PersistentVector&& other) : PersistentVector{} { swap(other); }
+        : PersistentVector{ (other.root ? other.root->acquire() : nullptr), other.tail->acquire(), other.height, other.n } {}
     PersistentVector& operator=(const PersistentVector& other) {
         if (this != &other) {
-            deinit();
-            // Uninitialized state -> safe to call placement new
+            this->~PersistentVector();
             new (this) PersistentVector(other);
         }
-        return (*this);
+        return *this;
     }
-    PersistentVector& operator=(PersistentVector&& other) {
-        if (this != &other)
+    // Moving is trivial
+    PersistentVector(PersistentVector&& other) noexcept : PersistentVector{} { swap(other); }
+    PersistentVector& operator=(PersistentVector&& other) noexcept {
+        if (this != &other) {
             swap(other);
-        return (*this);
+        }
+        return *this;
     }
-    ~PersistentVector() { deinit(); }
+    ~PersistentVector() {
+        if (root) {
+            root->release(height);
+            root = nullptr;
+        }
+        tail->release(0); // Usually tail->refCount == 1, but it can be shared on pop_back()
+        tail = nullptr;
+        height = n = 0;
+    }
 
-    // Random access in O(log_numBranches_n) => in practice, no more than 5-6 node hops.
+    // Random access in O(log_B_n) => in practice, no more than 5-6 node hops.
     // Each node hop may cost 2 cache misses (not 1), since a node may not fit in a cache line,
     // making access to the last pointer in the array probably costlier than access to the first.
     const T& operator[](const size_t i) const {
-        vassert(i < n);
+        assert(i < n);
         return find(i);
     }
     // Return a new vector, with value val at position i
     PersistentVector set(const size_t i, const T& val) const& {
-        vassert(i < n);
+        assert(i < n);
         if (insideTail(i)) {
             Node* newRoot = (root ? root->acquire() : nullptr);
             Node* newTail = new Node(tail, 0);
             newTail->values[i%numValuesInLeaf] = val;
             return { newRoot,newTail,height,n };
         } else {
-            vassert(root != nullptr);
+            assert(root != nullptr);
             Node* newLeaf = nullptr;
             Node* newRoot = copyPath(root, height, newLeaf, i);
             newLeaf->values[i%numValuesInLeaf] = val;
@@ -298,7 +301,7 @@ public:
     // Important: such changes to one object will affect all object that share their
     // structure with the modified one (!). This is true for all transient operations!
     void set(const size_t i, const T& val) && {
-        vassert(i < n);
+        assert(i < n);
         find(i) = val;
     }
 
@@ -312,25 +315,25 @@ public:
         
         if (n%numValuesInLeaf != numValuesInLeaf - 1) {
             // There is more space left in the tail => nothing more to do (no more allocations,
-            // path copying or anything). Note that this happen almost every time (!)
+            // path copying or anything). Note that this happens almost every time (!)
             Node* newRoot = (root ? root->acquire() : nullptr);
             return { newRoot,newTail,height,n + 1 };
         } else if (root == nullptr) {
             // The tree structure is empty
-            vassert(height == 0 && n == numValuesInLeaf - 1);
+            assert(height == 0 && n == numValuesInLeaf - 1);
             return { newTail,new Node,0,n + 1 };
         } else if (treeSize(n) == fullTreeSize(height)) {
             // The tree structure is full -> the new tree (with the added leaf) will be higher
             Node* newRoot = new Node;
             newRoot->ptrs[0] = root->acquire();
             newRoot->ptrs[1] = buildLeftBranch(height, newTail);
-            vassert(newRoot->ptrs[1]->refCount == 1);
+            assert(newRoot->ptrs[1]->refCount == 1);
             return { newRoot,new Node,height + 1,n + 1 };
         } else {
             // There is space in the tree for another leaf
-            vassert(height > 0);
+            assert(height > 0);
             Node* newRoot = insertLeaf(root, newTail, height, treeSize(n));
-            vassert(newRoot->refCount == 1 && newTail->refCount == 1);
+            assert(newRoot->refCount == 1 && newTail->refCount == 1);
             return { newRoot,new Node,height,n + 1 };
         }
     }
@@ -343,7 +346,7 @@ public:
         if (n%numValuesInLeaf != 0) { // Tail isn't full yet, literally nothing more to do
             return;
         } else if (root == nullptr) {
-            vassert(height == 0 && n == numValuesInLeaf);
+            assert(height == 0 && n == numValuesInLeaf);
             root = tail;
             tail = new Node;
             height = 0;
@@ -355,7 +358,7 @@ public:
             tail = new Node;
             ++height;
         } else {
-            vassert(height > 0);
+            assert(height > 0);
             Node* currRoot = root;
             size_t currH = height;
             --n; // The old value is needed for intermediate calculations
@@ -375,7 +378,7 @@ public:
             }
             if (!inserted) {
                 Node*& ptrToLeaf = currRoot->ptrs[idxAtLevel(n, 1)];
-                vassert(ptrToLeaf == nullptr);
+                assert(ptrToLeaf == nullptr);
                 ptrToLeaf = tail;
             }
             tail = new Node;
@@ -384,7 +387,7 @@ public:
     }
     // Return a new vector, obtained by removing the last value
     PersistentVector pop_back() const& {
-        vassert(n > 0);
+        assert(n > 0);
         if (n%numValuesInLeaf != 0) { // The tail isn't empty
             // Normally, a vector keeps its own tail -> but for trivial types it is okay to reuse a part of
             // another tree's structure, since pushing back again will allocate a new tail node anyway.
@@ -393,7 +396,7 @@ public:
             return { newRoot,tail->acquire(),height,n - 1 };
         } else if (height == 0) {
             // After removing an element, the remaining fit in a single node (the tail) => we'll have an empty tree
-            vassert(n == numValuesInLeaf);
+            assert(n == numValuesInLeaf);
             return { nullptr,root->acquire(),0,n - 1 };
         } else if (n == (fullTreeSize(height - 1) + numValuesInLeaf)) {
             // After removing an element, the remaining can fit in a tree, 1 level shorter
@@ -414,7 +417,7 @@ public:
     }
     // Transient (modifying) pop_back()
     void pop_back() && {
-        vassert(n > 0);
+        assert(n > 0);
         CheckInvariantsRAII check{ *this };
         if (n%numValuesInLeaf != 0) {
             // The tail was not empty => reusing the tail node
@@ -422,7 +425,7 @@ public:
             --n;
         } else if (height == 0) {
             // After removing an element, the remaining fit in a single node (the tail) => we'll have an empty tree
-            vassert(n == numValuesInLeaf);
+            assert(n == numValuesInLeaf);
             tail->release(0);
             tail = root;
             root = nullptr;
@@ -468,32 +471,27 @@ public:
         // always equivalent to dereferencing a single pointer, and incrementing
         // an iterator is almost always as fast as incrementing two integers - the
         // pointer is updated via a tree walk only every numValuesInLeaf increments.
-        const PersistentVector& pv;
+        const PersistentVector* pv;
         const T* ptr;
         size_t idx;
 
-        iterator(const PersistentVector& pv, const size_t idx)
-            : pv{ pv }, ptr{ &pv.find(idx) }, idx{ idx } {}
+        iterator(const PersistentVector* pv, const size_t idx)
+            : pv{ pv }, ptr{ (idx == -1 ? nullptr : & pv->find(idx)) }, idx{idx} {}
     public:
-        bool operator==(const iterator& other) const {
-            // The pv address check is needed due to value sharing
-            // between vectors. This way iterators, received from
-            // different vectors, always compare inequal.
-            return (ptr == other.ptr && (&pv) == (&other.pv));
-        }
-        bool operator!=(const iterator& other) const {
-            return !((*this) == other);
-        }
-        const T& operator*() const {
-            return *ptr;
-        }
-        const T* operator->() const {
-            return ptr;
-        }
+        using value_type = T; // value_type should be non-const even for const iterators
+        using pointer    = const T*;
+        using reference  = const T&;
+        using difference_type   = ptrdiff_t;
+        using iterator_category = std::random_access_iterator_tag;
+        using iterator_concept  = std::random_access_iterator_tag;
+        iterator() : pv{ nullptr }, ptr{ nullptr }, idx{ -1 } {}
+
+        reference operator*() const { return *ptr; }
+        pointer operator->() const { return ptr; }
         iterator& operator++() {
             ++ptr; ++idx;
             if (idx%numValuesInLeaf == 0) { // We have moved to the next leaf in the tree
-                ptr = &pv.find(idx); // This will take care of bounds checking
+                ptr = &pv->find(idx); // This will take care of bounds checking
             }
             return (*this);
         }
@@ -505,7 +503,7 @@ public:
         iterator& operator--() {
             --ptr; --idx;
             if (idx%numValuesInLeaf == numValuesInLeaf - 1) { // We have moved to the previous leaf in the tree
-                ptr = &pv.find(idx); // This will take care of bounds checking
+                ptr = &pv->find(idx); // This will take care of bounds checking
             }
             return (*this);
         }
@@ -514,17 +512,40 @@ public:
             --(*this);
             return copy;
         }
+        iterator& operator+=(const ptrdiff_t n) {
+            const size_t oldIdx = idx;
+            ptr += n; idx += n;
+            if (idx > pv->size()) {
+                ptr = nullptr;
+            } else if (idx / numValuesInLeaf != oldIdx / numValuesInLeaf) {
+                ptr = &pv->find(idx);
+            }
+            return *this;
+        }
+        iterator operator+(const ptrdiff_t n) const {
+            iterator copy{ *this };
+            copy += n;
+            return copy;
+        }
+        friend iterator operator+(const ptrdiff_t n, const iterator& it) { return (it + n); }
+        iterator& operator-=(const ptrdiff_t n) { return (*this) += (-n); } // lol
+        iterator operator-(const ptrdiff_t n) const { return (*this) + (-n); }
+        ptrdiff_t operator-(const iterator& other) const { return (idx - other.idx); }
+        reference operator[](const ptrdiff_t n) const { return (*pv)[idx + n]; }
+        // Although we can detect when iterators from different vectors are compared,
+        // the requirement for iterators to be totally ordered means we can't use it to always return false.
+        bool operator==(const iterator& other) const { assert(pv == other.pv); return (idx == other.idx); }
+        auto operator<=>(const iterator& other) const { assert(pv == other.pv); return (ptr <=> other.ptr); }
     };
     using const_iterator = iterator;
-    iterator begin() const { return { *this,0 }; }
-    iterator   end() const { return { *this,n }; }
+    iterator begin() const { return { this,0 }; }
+    iterator   end() const { return { this,n }; }
     const_iterator cbegin() const { return begin(); }
     const_iterator   cend() const { return   end(); }
+    static_assert(std::random_access_iterator<iterator>);
 };
 
-template <typename T>
-PersistentVector<T>&& make_transient(PersistentVector<T>& pv) {
+template <typename T, size_t B>
+PersistentVector<T, B>&& make_transient(PersistentVector<T, B>& pv) {
     return std::move(pv);
 }
-
-#undef vassert
