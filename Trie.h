@@ -8,13 +8,14 @@
 #include <bit> // std::bit_width, used for formatted output only
 
 // Forward declaration
-template <typename T> class CompressedTrie;
+template <typename T>
+	requires (TrieTraits<T>::numPointers <= 128)
+class CompressedTrie;
 
 // A trie node with N child nodes. Note that it doesn't depend on trie value type.
 template <size_t N>
+	requires (N >= 2 && N <= 256)
 struct Node {
-	static_assert(N >= 2 && N <= 256, "Invalid pointer array size!");
-
 	// An array of pointers, in whose less-significant bit is encoded whether the pointed-to node contains a value
 	std::array<uintptr_t, N> ptrs;
 	Node() : ptrs{ 0 } {}
@@ -36,7 +37,6 @@ struct Node {
 // A generic trie class, supporting all types with complete TrieTraits specializations
 template <typename T>
 class Trie : public TrieTraversal<Trie, T> {
-	friend TrieTraversal<Trie, T>;
 	using Traits = TrieTraits<T>;
 	using Node = Node<Traits::numPointers>;
 
@@ -150,5 +150,6 @@ private:
 	static bool hasChild(const pointer p, size_t idx) { return bool(Node::decode(p)->ptrs[idx]); }
 	static pointer getChild(const pointer p, size_t idx) { return Node::decode(p)->ptrs[idx]; }
 	// (!)
+	friend TrieTraversal<Trie, T>;
 	friend CompressedTrie<T>;
 };

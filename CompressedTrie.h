@@ -2,14 +2,11 @@
 #include "Trie.h"
 #include "TrieTraversal.h"
 #include "StaticBitset.h" // from SnippySnippets repo
-#include "CharSet.h" // from SnippySnippets repo
+#include "vassert.h"
 #include <type_traits> // std::conditional_t
 #include <vector>
 #include <queue>
 #include <bit> // std::bit_ceil
-
-#include <cassert>
-#define vassert assert
 
 // A compressed, static representation of a Trie. All original Trie nodes are
 // indexed consecutively in a breadth-first manner, starting from 0 for the root.
@@ -17,18 +14,18 @@
 // so that for each node we only need to keep the index of the first child;
 // and the info which child pointers are non-null can be compressed in a bitset.
 template <typename T>
+    requires (TrieTraits<T>::numPointers <= 128) // No large enough bitset!
 class CompressedTrie : public TrieTraversal<CompressedTrie, T> {
     friend TrieTraversal<CompressedTrie, T>;
     using Traits = TrieTraits<T>;
-    static_assert(Traits::numPointers <= 128, "No large enough bitset!");
-    using Bitset = std::conditional_t<Traits::numPointers <= 64, StaticBitset<std::bit_ceil(Traits::numPointers)>, CharSet>;
+    using Bitset = StaticBitset<std::bit_ceil(Traits::numPointers)>;
     using Index = typename Bitset::Index;
 
     // For each node, a bitset indicating the position of non-null child pointers
     std::vector<Bitset> bitsets;
     // For each node, the index of its first child node + 1 bit indicating whether the node has a value
     std::vector<unsigned> firstChild;
-    // # of values in tree. Used in the root node only.
+    // # of values in tree
     size_t count;
     // Max # of bits of all values in tree. Used for unsigned integers only
     int maxBits_;
@@ -94,5 +91,3 @@ private:
         return (firstChild[p] >> 1) + int(bitsets[p].rank(Index(idx)));
     }
 };
-
-#undef vassert

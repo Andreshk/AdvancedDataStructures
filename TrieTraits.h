@@ -3,10 +3,8 @@
 #include <limits> // std::numeric_limits<char>::max
 #include <string>
 #include <stack>
-#include "StaticStack.h"
-
-#include <cassert>
-#define vassert assert
+#include "StaticStack.h" // from SnippySnippets repo
+#include "vassert.h" // from SnippySnippets repo
 
 // Each type to be used in a Trie should have a specialization of this class, similar to const char* and uint64_t
 template <typename T>
@@ -70,5 +68,3 @@ public:
 	using Stack = StaticStack<T1, maxDepth + 1>; // Trie path length limit (+1 for root node)
 	static constexpr bool noexceptStack = true;
 };
-
-#undef vassert
