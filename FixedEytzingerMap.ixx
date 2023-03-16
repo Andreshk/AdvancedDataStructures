@@ -1,31 +1,31 @@
+export module Eytzinger;
 // Adapted from https://github.com/mikekazakov/eytzinger
-#pragma once
-#include <stdexcept>
-#include <memory>
-#include <new>
-#include <vector>
-#include <ranges>     // std::ranges::bidirectional_range
-#include <utility>    // std::pair
-#include <iterator>   // std::bidirectional_iterator
-#include <algorithm>  // std::sort, std::unique
-#include <functional> // std::less
-#include <type_traits>
-#include "vassert.h"  // can be replaced with <cassert>
+import <stdexcept>;
+import <memory>;
+import <new>;
+import <vector>;
+import <ranges>;     // std::ranges::{sort,unique,random_access_range}
+import <utility>;    // std::pair
+import <concepts>;   // std::same_as
+import <iterator>;   // std::bidirectional_iterator
+import <algorithm>;  // std::sort, std::unique
+import <functional>; // std::less
+import <type_traits>;
+import <cassert>;
 
-// Helper function for throwing when needed (i.e. at())
-[[noreturn]] void eytzingerThrow() { throw std::out_of_range("FixedEytzingerMap::at: key not found"); }
-
-// Detects whether a type T contains an is_transparent type (and can be used for heterogenous comparison)
-template <typename T>
-concept IsTransparent = requires { typename T::is_transparent; };
 // Detects whether an iterator can be used for construction of key-value pairs
 template <typename It, typename Key, typename Value>
 concept CanConstructPairsOf = std::input_iterator<It> && std::is_constructible_v<std::pair<Key, Value>, typename std::iterator_traits<It>::reference>;
 // Conditionally adds a const modifier to a given type
 template <bool B, typename T>
 using AddConst = std::conditional_t<B, const T, T>;
+// Serves as a filter of which type can be accepted by the map's methods that perform comparisons.
+// If the comparator is transparent (and can be used for heterogenous comparison), they'll accept any type.
+// If it is not, than only the Key type will be accepted, with no conversions being permitted (!)
+template <typename K2, typename Comp, typename Key>
+concept ComparableWith = requires { typename Comp::is_transparent; } || std::same_as<Key, K2>;
 
-template <typename Key, typename Value, class Compare = std::less<Key>>
+export template <typename Key, typename Value, class Compare = std::less<Key>>
 class FixedEytzingerMap {
     // Proxy iterator - abstracts constness away to reduce code duplication between iterator & const_iterator
     template <bool isConst>
@@ -46,8 +46,9 @@ public:
 
     static_assert(std::is_nothrow_move_constructible_v<key_type>);
     static_assert(std::is_nothrow_move_constructible_v<mapped_type>);
-    static_assert(std::random_access_iterator<iterator>); // Bonus: usual set/map iterators are "just" bidirectional
-    //static_assert(std::random_access_iterator<const_iterator>); // to-do
+    // Usual set/map iterators are "just" bidirectional, this has the bonus of being random-access
+    static_assert(std::random_access_iterator<iterator>);
+    static_assert(std::random_access_iterator<const_iterator>);
 private:
     key_type* keys;
     mapped_type* values;
@@ -59,14 +60,14 @@ private:
     void deallocateUninitialized() noexcept;
     // Build the subtree, rooted in a given index from the values, starting from a given iterator.
     void buildTree(const size_t idx, std::vector<value_type>::iterator& it) noexcept;
-    // Call all destructors (to be used before deallocation, f.e.)
-    void destroyAll() const noexcept;
+    // Helper ctor
+    FixedEytzingerMap(std::vector<value_type>&& values, const Compare& comp);
 public:    
     // Construction
     FixedEytzingerMap();
     explicit FixedEytzingerMap(const Compare& comp);
     FixedEytzingerMap(const FixedEytzingerMap& other);
-    FixedEytzingerMap(FixedEytzingerMap&& other);
+    FixedEytzingerMap(FixedEytzingerMap&& other) noexcept;
     explicit FixedEytzingerMap(std::initializer_list<value_type> l, const Compare& comp = Compare());
     template <CanConstructPairsOf<Key, Value> It>
     FixedEytzingerMap(It from, It to, const Compare& comp = Compare());
@@ -76,28 +77,11 @@ public:
     FixedEytzingerMap& operator=(FixedEytzingerMap&& other) noexcept;
     FixedEytzingerMap& operator=(std::initializer_list<value_type> l);
     template <CanConstructPairsOf<Key, Value> It>
-    void assign(It begin, It end);
+    void assign(It from, It to);
     void assign(std::initializer_list<value_type> l);
     // Destruction
     ~FixedEytzingerMap();
 
-    // Element access
-    mapped_type& at(const key_type& key);
-    template <typename K2> requires IsTransparent<Compare>
-    mapped_type& at(const K2& key);
-    
-    const mapped_type& at(const key_type& key) const;
-    template <typename K2> requires IsTransparent<Compare>
-    const mapped_type& at(const K2& key) const;
-
-    mapped_type& operator[](const key_type& key) noexcept;
-    template <typename K2> requires IsTransparent<Compare>
-    mapped_type& operator[](const K2& key) noexcept;
-    
-    const mapped_type& operator[](const key_type& key) const noexcept;
-    template <typename K2> requires IsTransparent<Compare>
-    const mapped_type& operator[](const K2& key) const noexcept;
-    
     // Iterators
     iterator       begin()  noexcept;
     iterator       end()    noexcept;
@@ -105,7 +89,7 @@ public:
     const_iterator end()    const noexcept;
     const_iterator cbegin() const noexcept;
     const_iterator cend()   const noexcept;
-    
+
     // Modifiers
     void clear() noexcept;
     void swap(FixedEytzingerMap& other) noexcept;
@@ -113,44 +97,29 @@ public:
     // Capacity
     bool empty() const noexcept;
     size_type size() const noexcept;
-    size_type max_size() const noexcept;
+    static size_type max_size() noexcept;
+
+    // Element access
+    mapped_type& at(const ComparableWith<Compare, Key> auto& key);
+    const mapped_type& at(const ComparableWith<Compare, Key> auto& key) const;
+
+    mapped_type& operator[](const ComparableWith<Compare, Key> auto& key) noexcept;
+    const mapped_type& operator[](const ComparableWith<Compare, Key> auto& key) const noexcept;
 
     // Lookup
-    size_type count(const key_type& key) const noexcept;
-    template <typename K2> requires IsTransparent<Compare>
-    size_type count(const K2& key) const noexcept;
+    size_type count(const ComparableWith<Compare, Key> auto& key) const noexcept;
 
-    iterator find(const key_type& key) noexcept;
-    template <typename K2> requires IsTransparent<Compare>
-    iterator find(const K2& key) noexcept;
+    iterator find(const ComparableWith<Compare, Key> auto& key) noexcept;
+    const_iterator find(const ComparableWith<Compare, Key> auto& key) const noexcept;
     
-    const_iterator find(const key_type& key) const noexcept;
-    template <typename K2> requires IsTransparent<Compare>
-    const_iterator find(const K2& key) const noexcept;
-    
-    range_pair equal_range(const key_type& key) noexcept;
-    template <typename K2> requires IsTransparent<Compare>
-    range_pair equal_range(const K2& key) noexcept;
+    range_pair equal_range(const ComparableWith<Compare, Key> auto& key) noexcept;
+    const_range_pair equal_range(const ComparableWith<Compare, Key> auto& key) const noexcept;
 
-    const_range_pair equal_range(const key_type& key) const noexcept;
-    template <typename K2> requires IsTransparent<Compare>
-    const_range_pair equal_range(const K2& key) const noexcept;
-
-    iterator lower_bound(const key_type& key) noexcept;
-    template <typename K2> requires IsTransparent<Compare>
-    iterator lower_bound(const K2& key) noexcept;
+    iterator lower_bound(const ComparableWith<Compare, Key> auto& key) noexcept;
+    const_iterator lower_bound(const ComparableWith<Compare, Key> auto& key) const noexcept;
     
-    const_iterator lower_bound(const key_type& key) const noexcept;
-    template <typename K2> requires IsTransparent<Compare>
-    const_iterator lower_bound(const K2& key) const noexcept;
-    
-    iterator upper_bound(const key_type& key) noexcept;
-    template <typename K2> requires IsTransparent<Compare>
-    iterator upper_bound(const K2& key) noexcept;
-    
-    const_iterator upper_bound(const key_type& key) const noexcept;
-    template <typename K2> requires IsTransparent<Compare>
-    const_iterator upper_bound(const K2& key) const noexcept;
+    iterator upper_bound(const ComparableWith<Compare, Key> auto& key) noexcept;
+    const_iterator upper_bound(const ComparableWith<Compare, Key> auto& key) const noexcept;
 };
 
 template <typename Key, typename Value, typename Compare>
@@ -228,7 +197,7 @@ FixedEytzingerMap<Key, Value, Compare>::FixedEytzingerMap(const Compare& comp) :
 {}
 
 template <typename Key, typename Value, typename Compare>
-FixedEytzingerMap<Key, Value, Compare>::FixedEytzingerMap(FixedEytzingerMap&& other) :
+FixedEytzingerMap<Key, Value, Compare>::FixedEytzingerMap(FixedEytzingerMap&& other) noexcept :
     keys(other.keys),
     values(other.values),
     count_(other.count_),
@@ -243,20 +212,20 @@ template <typename Key, typename Value, typename Compare>
 FixedEytzingerMap<Key, Value, Compare>::FixedEytzingerMap(const FixedEytzingerMap& other) : FixedEytzingerMap(other.comp) {
     allocateUninitialized(other.count_);
     // If some copy constructor throws, the previously constructed keys/values will be destroyed safely
-    Key *last_key = keys;
-    Value *last_value = values;
+    Key* nextKey = keys;
+    Value* nextValue = values;
     try {
-        for (size_type i = 0; i < count_; ++i, ++last_key) {
+        for (size_type i = 0; i < count_; ++i, ++nextKey) {
             ::new((void*)(keys + i)) Key(other.keys[i]); // cast to void* to avoid suspicious overloads
         }
-        for (size_type i = 0; i < count_; ++i, ++last_value) {
+        for (size_type i = 0; i < count_; ++i, ++nextValue) {
             ::new((void*)(values + i)) Value(other.values[i]);
         }
     } catch(...) {
-        for (Key* it = keys; it < last_key; ++it) {
+        for (Key* it = --nextKey; it >= keys; --it) {
             it->~Key();
         }
-        for (Value* it = values; it < last_value; ++it) {
+        for (Value* it = --nextValue; it >= values; --it) {
             it->~Value();
         }
         deallocateUninitialized();
@@ -265,37 +234,28 @@ FixedEytzingerMap<Key, Value, Compare>::FixedEytzingerMap(const FixedEytzingerMa
 }
 
 template <typename Key, typename Value, typename Compare>
-FixedEytzingerMap<Key, Value, Compare>::FixedEytzingerMap(std::initializer_list<value_type> l, const Compare& comp) : FixedEytzingerMap(comp) {
-    std::vector<value_type> t{ l };
-    std::sort(t.begin(), t.end(), [this](const value_type& v1, const value_type& v2) {
+FixedEytzingerMap<Key, Value, Compare>::FixedEytzingerMap(std::vector<value_type>&& values, const Compare& comp) : comp(comp) {
+    std::ranges::sort(values, [this](const value_type& v1, const value_type& v2) {
         return this->comp(v1.first, v2.first);
     });
-    t.erase(std::unique(t.begin(), t.end(), [this](const value_type& v1, const value_type& v2){
+    const auto [end, _] = std::ranges::unique(values, [this](const value_type& v1, const value_type& v2) {
         return (!this->comp(v1.first, v2.first) && !this->comp(v2.first, v1.first));
-    }), t.end());
-    
-    allocateUninitialized(t.size());
-    auto it = t.begin();
+    });
+
+    allocateUninitialized(end - values.begin());
+    auto it = values.begin();
     buildTree(0, it);
-    vassert(it == t.end());
+    assert(it == end);
 }
 
 template <typename Key, typename Value, typename Compare>
-template <CanConstructPairsOf<Key, Value> It>
-FixedEytzingerMap<Key, Value, Compare>::FixedEytzingerMap(It from, It to, const Compare& comp) : FixedEytzingerMap(comp) {
-    std::vector<value_type> t{ from, to };
-    std::sort(t.begin(), t.end(), [this](const value_type& v1, const value_type& v2) {
-        return this->comp(v1.first, v2.first);
-    });
-    t.erase(std::unique(t.begin(), t.end(), [this](const value_type& v1, const value_type& v2){
-        return (!this->comp(v1.first, v2.first) && !this->comp(v2.first, v1.first));
-    }), t.end());
+FixedEytzingerMap<Key, Value, Compare>::FixedEytzingerMap(std::initializer_list<value_type> l, const Compare& comp)
+    : FixedEytzingerMap(std::vector<value_type>{l}, comp) {}
 
-    allocateUninitialized(t.size());
-    auto it = t.begin();
-    buildTree(0, it);
-    vassert(it == t.end());
-}
+template <typename Key, typename Value, typename Compare>
+template <CanConstructPairsOf<Key, Value> It>
+FixedEytzingerMap<Key, Value, Compare>::FixedEytzingerMap(It from, It to, const Compare& comp)
+    : FixedEytzingerMap(std::vector<value_type>{ from, to }, comp) {}
 
 template <typename Key, typename Value, typename Compare>
 FixedEytzingerMap<Key, Value, Compare>&
@@ -341,16 +301,14 @@ void FixedEytzingerMap<Key, Value, Compare>::assign(std::initializer_list<value_
 template <typename Key, typename Value, typename Compare>
 FixedEytzingerMap<Key, Value, Compare>::~FixedEytzingerMap() {
     static_assert(std::ranges::random_access_range<FixedEytzingerMap>); // Bonus: usual set/map-s are "just" bidirectional
-    destroyAll();
-    deallocateUninitialized();
+    clear();
 }
 
 template <typename Key, typename Value, typename Compare>
 void FixedEytzingerMap<Key, Value, Compare>::allocateUninitialized(const size_t count) {
-    vassert(keys == nullptr && values == nullptr);
-    count_ = count;
+    assert(keys == nullptr && values == nullptr);
     try {
-        // Allocate aligned, but uninitialzed memory - the values inside will be initialized in the special recursive order.
+        // Allocate aligned, but uninitialized memory - the values inside will be initialized in the special recursive order.
         // This way we won't make unnecessary initializations & move assignments
         keys = static_cast<Key*>(::operator new(count * sizeof(Key), std::align_val_t(alignof(Key))));
         values = static_cast<Value*>(::operator new(count * sizeof(Value), std::align_val_t(alignof(Value))));
@@ -358,29 +316,21 @@ void FixedEytzingerMap<Key, Value, Compare>::allocateUninitialized(const size_t 
         deallocateUninitialized();
         std::rethrow_exception(std::current_exception());
     }
+    count_ = count;
 }
 
 template <typename Key, typename Value, typename Compare>
 void FixedEytzingerMap<Key, Value, Compare>::deallocateUninitialized() noexcept {
-    if(keys) {
-        // Elements should be destroyed beforehand (f.e. by destroyAll())
-        // because this casts the pointer to void* & doesn't call destructors (!)
+    if (keys) {
+        // Elements should be destroyed beforehand because this casts the pointer to void* & doesn't call destructors (!)
         ::operator delete(keys, std::align_val_t(alignof(Key)));
         keys = nullptr;
     }
-    if(values) {
+    if (values) {
         ::operator delete(values, std::align_val_t(alignof(Value)));
         values = nullptr;
     }
     count_ = 0;
-}
-
-template <typename Key, typename Value, typename Compare>
-void FixedEytzingerMap<Key, Value, Compare>::destroyAll() const noexcept {
-    for (size_type i = 0; i < count_; ++i) {
-        keys[i].~Key();
-        values[i].~Value();
-    }
 }
 
 template <typename Key, typename Value, typename Compare>
@@ -400,7 +350,10 @@ void FixedEytzingerMap<Key, Value, Compare>::buildTree(const size_t idx, std::ve
 
 template <typename Key, typename Value, typename Compare>
 void FixedEytzingerMap<Key, Value, Compare>::clear() noexcept {
-    destroyAll();
+    for (size_type i = 0; i < count_; ++i) {
+        keys[i].~Key();
+        values[i].~Value();
+    }
     deallocateUninitialized();
 }
 
@@ -423,7 +376,7 @@ auto FixedEytzingerMap<Key, Value, Compare>::size() const noexcept -> size_type 
 }
 
 template <typename Key, typename Value, typename Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::max_size() const noexcept -> size_type {
+auto FixedEytzingerMap<Key, Value, Compare>::max_size() noexcept -> size_type {
     return (std::numeric_limits<size_type>::max() / 4);
 }
 
@@ -458,7 +411,7 @@ auto FixedEytzingerMap<Key, Value, Compare>::cend() const noexcept -> const_iter
 }
 
 template <typename Key, typename Value, typename Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::lower_bound(const Key& key) const noexcept -> const_iterator {
+auto FixedEytzingerMap<Key, Value, Compare>::lower_bound(const ComparableWith<Compare, Key> auto& key) const noexcept -> const_iterator {
     size_type i = count_, j = 0;
     while (j < count_) {
         if (comp(keys[j], key)) {
@@ -472,9 +425,7 @@ auto FixedEytzingerMap<Key, Value, Compare>::lower_bound(const Key& key) const n
 }
 
 template <typename Key, typename Value, typename Compare>
-template <typename K2>
-requires IsTransparent<Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::lower_bound(const K2& key) const noexcept -> const_iterator {
+auto FixedEytzingerMap<Key, Value, Compare>::lower_bound(const ComparableWith<Compare, Key> auto& key) noexcept -> iterator {
     size_type i = count_, j = 0;
     while (j < count_) {
         if (comp(keys[j], key)) {
@@ -488,37 +439,7 @@ auto FixedEytzingerMap<Key, Value, Compare>::lower_bound(const K2& key) const no
 }
 
 template <typename Key, typename Value, typename Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::lower_bound(const Key& key) noexcept -> iterator {
-    size_type i = count_, j = 0;
-    while (j < count_) {
-        if (comp(keys[j], key)) {
-            j = 2 * j + 2; // right branch
-        } else {
-            i = j;
-            j = 2 * j + 1; // left branch
-        }
-    }
-    return { keys + i, values + i };
-}
-
-template <typename Key, typename Value, typename Compare>
-template <typename K2>
-requires IsTransparent<Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::lower_bound(const K2& key) noexcept -> iterator {
-    size_type i = count_, j = 0;
-    while (j < count_) {
-        if (comp(keys[j], key)) {
-            j = 2 * j + 2; // right branch
-        } else {
-            i = j;
-            j = 2 * j + 1; // left branch
-        }
-    }
-    return { keys + i, values + i };
-}
-
-template <typename Key, typename Value, typename Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::upper_bound(const key_type& key) noexcept -> iterator {
+auto FixedEytzingerMap<Key, Value, Compare>::upper_bound(const ComparableWith<Compare, Key> auto& key) noexcept -> iterator {
     size_type i = count_, j = 0;
     while (j < count_) {
         if (comp(key, keys[j])) {
@@ -532,9 +453,7 @@ auto FixedEytzingerMap<Key, Value, Compare>::upper_bound(const key_type& key) no
 }
 
 template <typename Key, typename Value, typename Compare>
-template <typename K2>
-requires IsTransparent<Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::upper_bound(const K2& key) noexcept -> iterator {
+auto FixedEytzingerMap<Key, Value, Compare>::upper_bound(const ComparableWith<Compare, Key> auto& key) const noexcept -> const_iterator {
     size_type i = count_, j = 0;
     while (j < count_) {
         if (comp(key, keys[j])) {
@@ -548,57 +467,7 @@ auto FixedEytzingerMap<Key, Value, Compare>::upper_bound(const K2& key) noexcept
 }
 
 template <typename Key, typename Value, typename Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::upper_bound(const key_type& key) const noexcept -> const_iterator {
-    size_type i = count_, j = 0;
-    while (j < count_) {
-        if (comp(key, keys[j])) {
-            i = j;
-            j = 2 * j + 1; // left branch
-        } else {
-            j = 2 * j + 2; // right branch
-        }
-    }
-    return { keys + i, values + i };
-}
-
-template <typename Key, typename Value, typename Compare>
-template <typename K2>
-requires IsTransparent<Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::upper_bound(const K2& key) const noexcept -> const_iterator {
-    size_type i = count_, j = 0;
-    while (j < count_) {
-        if (comp(key, keys[j])) {
-            i = j;
-            j = 2 * j + 1; // left branch
-        } else {
-            j = 2 * j + 2; // right branch
-        }
-    }
-    return { keys + i, values + i };
-}
-
-template <typename Key, typename Value, typename Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::find(const Key& key) const noexcept -> const_iterator {
-    const_iterator res = lower_bound(key);
-    if (res != end() && !comp(key, *res.k)) {
-        return res;
-    }
-    return end();
-}
-
-template <typename Key, typename Value, typename Compare>
-template <typename K2>
-requires IsTransparent<Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::find(const K2& key) const noexcept -> const_iterator {
-    const_iterator res = lower_bound(key);
-    if (res != end() && !comp(key, *res.k)) {
-        return res;
-    }
-    return end();
-}
-
-template <typename Key, typename Value, typename Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::find(const Key& key) noexcept -> iterator {
+auto FixedEytzingerMap<Key, Value, Compare>::find(const ComparableWith<Compare, Key> auto& key) noexcept -> iterator {
     iterator res = lower_bound(key);
     if (res != end() && !comp(key, *res.k)) {
         return res;
@@ -607,10 +476,8 @@ auto FixedEytzingerMap<Key, Value, Compare>::find(const Key& key) noexcept -> it
 }
 
 template <typename Key, typename Value, typename Compare>
-template <typename K2>
-requires IsTransparent<Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::find(const K2& key) noexcept -> iterator {
-    iterator res = lower_bound(key);
+auto FixedEytzingerMap<Key, Value, Compare>::find(const ComparableWith<Compare, Key> auto& key) const noexcept -> const_iterator {
+    const_iterator res = lower_bound(key);
     if (res != end() && !comp(key, *res.k)) {
         return res;
     }
@@ -618,7 +485,7 @@ auto FixedEytzingerMap<Key, Value, Compare>::find(const K2& key) noexcept -> ite
 }
 
 template <typename Key, typename Value, typename Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::equal_range(const Key& key) noexcept -> range_pair {
+auto FixedEytzingerMap<Key, Value, Compare>::equal_range(const ComparableWith<Compare, Key> auto& key) noexcept -> range_pair {
     iterator res = lower_bound(key);
     if (res != end() && !comp(key, *res.k)) {
         return { res, std::next(res, 1) };
@@ -627,18 +494,7 @@ auto FixedEytzingerMap<Key, Value, Compare>::equal_range(const Key& key) noexcep
 }
 
 template <typename Key, typename Value, typename Compare>
-template <typename K2>
-requires IsTransparent<Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::equal_range(const K2& key) noexcept -> range_pair {
-    iterator res = lower_bound(key);
-    if (res != end() && !comp(key, *res.k)) {
-        return { res, std::next(res, 1) };
-    }
-    return { end(), end() };
-}
-
-template <typename Key, typename Value, typename Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::equal_range(const Key& key) const noexcept -> const_range_pair {
+auto FixedEytzingerMap<Key, Value, Compare>::equal_range(const ComparableWith<Compare, Key> auto& key) const noexcept -> const_range_pair {
     const_iterator res = lower_bound(key);
     if (res != end() && !comp(key, *res.k)) {
         return { res, std::next(res, 1) };
@@ -647,18 +503,7 @@ auto FixedEytzingerMap<Key, Value, Compare>::equal_range(const Key& key) const n
 }
 
 template <typename Key, typename Value, typename Compare>
-template <typename K2>
-requires IsTransparent<Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::equal_range(const K2& key) const noexcept -> const_range_pair {
-    const_iterator res = lower_bound(key);
-    if (res != end() && !comp(key, *res.k)) {
-        return { res, std::next(res, 1) };
-    }
-    return { end(), end() };
-}
-
-template <typename Key, typename Value, typename Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::count(const key_type& key) const noexcept -> size_type {
+auto FixedEytzingerMap<Key, Value, Compare>::count(const ComparableWith<Compare, Key> auto& key) const noexcept -> size_type {
     const_iterator res = lower_bound(key);
     if (res != end() && !comp(key, *res.k)) {
         return 1;
@@ -667,85 +512,34 @@ auto FixedEytzingerMap<Key, Value, Compare>::count(const key_type& key) const no
 }
 
 template <typename Key, typename Value, typename Compare>
-template <typename K2>
-requires IsTransparent<Compare>
-auto FixedEytzingerMap<Key, Value, Compare>::count(const K2& key) const noexcept -> size_type {
-    const_iterator res = lower_bound(key);
-    if (res != end() && !comp(key, *res.k)) {
-        return 1;
-    }
-    return 0;
-}
-
-template <typename Key, typename Value, typename Compare>
-Value& FixedEytzingerMap<Key, Value, Compare>::at(const key_type& key) {
+Value& FixedEytzingerMap<Key, Value, Compare>::at(const ComparableWith<Compare, Key> auto& key) {
     iterator res = lower_bound(key);
     if (res != end() && !comp(key, *res.k)) {
         return *res.v;
     }
-    eytzingerThrow();
+    throw std::out_of_range("FixedEytzingerMap::at: key not found");
 }
 
 template <typename Key, typename Value, typename Compare>
-template <typename K2>
-requires IsTransparent<Compare>
-Value& FixedEytzingerMap<Key, Value, Compare>::at(const K2& key) {
-    iterator res = lower_bound(key);
-    if (res != end() && !comp(key, *res.k)) {
-        return *res.v;
-    }
-    eytzingerThrow();
-}
-
-template <typename Key, typename Value, typename Compare>
-const Value& FixedEytzingerMap<Key, Value, Compare>::at(const key_type& key) const {
+const Value& FixedEytzingerMap<Key, Value, Compare>::at(const ComparableWith<Compare, Key> auto& key) const {
     const_iterator res = lower_bound(key);
     if (res != end() && !comp(key, *res.k)) {
         return *res.v;
     }
-    eytzingerThrow();
+    throw std::out_of_range("FixedEytzingerMap::at: key not found");
 }
 
 template <typename Key, typename Value, typename Compare>
-template <typename K2>
-requires IsTransparent<Compare>
-const Value& FixedEytzingerMap<Key, Value, Compare>::at(const K2& key) const {
-    const_iterator res = lower_bound(key);
-    if (res != end() && !comp(key, *res.k)) {
-        return *res.v;
-    }
-    eytzingerThrow();
-}
-
-template <typename Key, typename Value, typename Compare>
-Value& FixedEytzingerMap<Key, Value, Compare>::operator[](const key_type& key) noexcept {
+Value& FixedEytzingerMap<Key, Value, Compare>::operator[](const ComparableWith<Compare, Key> auto& key) noexcept {
     iterator res = lower_bound(key);
-    vassert(res != end() && !comp(key, *res.k));
+    assert(res != end() && !comp(key, *res.k));
     return *res.v;
 }
 
 template <typename Key, typename Value, typename Compare>
-template <typename K2>
-requires IsTransparent<Compare>
-Value& FixedEytzingerMap<Key, Value, Compare>::operator[](const K2& key) noexcept {
-    iterator res = lower_bound(key);
-    vassert(res != end() && !comp(key, *res.k));
-    return *res.v;
-}
-
-template <typename Key, typename Value, typename Compare>
-const Value& FixedEytzingerMap<Key, Value, Compare>::operator[](const key_type& key) const noexcept {
+const Value& FixedEytzingerMap<Key, Value, Compare>::operator[](const ComparableWith<Compare, Key> auto& key) const noexcept {
     const_iterator res = lower_bound(key);
-    vassert(res != end() && !comp(key, *res.k));
-    return *res.v;
-}
-
-template <typename Key, typename Value, typename Compare>
-template <typename K2>
-requires IsTransparent<Compare>
-const Value& FixedEytzingerMap<Key, Value, Compare>::operator[](const K2& key) const noexcept {
-    const_iterator res = lower_bound(key);
-    vassert(res != end() && !comp(key, *res.k));
+    assert(res != end() && !comp(key, *res.k));
     return *res.v;
 }
 
@@ -759,26 +553,19 @@ struct FixedEytzingerMap<Key, Value, Compare>::PairPtrWrapper
     const std::pair<const Key&, Value2&>* operator->() const noexcept { return this; }
 };
 
-template <typename Key, typename Value, typename Compare>
+export template <typename Key, typename Value, typename Compare>
 inline bool operator==(const FixedEytzingerMap<Key, Value, Compare>& lhs,
                        const FixedEytzingerMap<Key, Value, Compare>& rhs)
 {
     return lhs.size() == rhs.size() && std::equal(lhs.begin(), lhs.end(), rhs.begin());
 }
 
-template <typename Key, typename Value, typename Compare>
-inline bool operator!=(const FixedEytzingerMap<Key, Value, Compare>& lhs,
-                       const FixedEytzingerMap<Key, Value, Compare>& rhs)
-{
-    return !(lhs == rhs);
-}
-
 namespace std
 {
-template <typename Key, typename Value, typename Compare>
+export template <typename Key, typename Value, typename Compare>
 inline void swap(FixedEytzingerMap<Key, Value, Compare>& lhs,
                  FixedEytzingerMap<Key, Value, Compare>& rhs)
 {
-    rhs.swap(lhs);
+    lhs.swap(rhs);
 }
 }
