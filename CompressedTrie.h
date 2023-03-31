@@ -15,11 +15,10 @@
 // and the info which child pointers are non-null can be compressed in a bitset.
 template <typename T>
     requires (TrieTraits<T>::numPointers <= 128) // No large enough bitset!
-class CompressedTrie : public TrieTraversal<CompressedTrie, T> {
-    friend TrieTraversal<CompressedTrie, T>;
+class CompressedTrie : public TrieTraversal<T> {
     using Traits = TrieTraits<T>;
     using Bitset = StaticBitset<std::bit_ceil(Traits::numPointers)>;
-    using Index = typename Bitset::Index;
+    using Index = typename Bitset::iterator::value_type;
 
     // For each node, a bitset indicating the position of non-null child pointers
     std::vector<Bitset> bitsets;
@@ -90,4 +89,6 @@ private:
     pointer getChild(const pointer p, size_t idx) const {
         return (firstChild[p] >> 1) + int(bitsets[p].rank(Index(idx)));
     }
+    // (!)
+    friend TrieTraversal<T>;
 };

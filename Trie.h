@@ -36,16 +36,16 @@ struct Node {
 
 // A generic trie class, supporting all types with complete TrieTraits specializations
 template <typename T>
-class Trie : public TrieTraversal<Trie, T> {
+class Trie : public TrieTraversal<T> {
 	using Traits = TrieTraits<T>;
 	using Node = Node<Traits::numPointers>;
 
 	Node root; // A trie always has a root node, so no need for a dynamic allocation
-	size_t count; // # of values in tree.
-	int maxBits_; // Max # of bits of all values in tree. Used for unsigned integers only.
-	bool rootHasValue; // Whether root node contains a value
+	size_t count = 0; // # of values in tree.
+	int maxBits_ = 0; // Max # of bits of all values in tree. Used for unsigned integers only.
+	bool rootHasValue = 0; // Whether root node contains a value
 public:
-	Trie() : rootHasValue{ 0 }, maxBits_{ 0 }, count{ 0 } {};
+	Trie() = default;
 	Trie(const Trie&) = delete;
 	Trie& operator=(const Trie&) = delete;
 	Trie(Trie&& other) noexcept
@@ -62,7 +62,7 @@ public:
 	}
 	~Trie() { clear(); }
 	// Convenience ctor
-	Trie(std::initializer_list<T> il) : Trie{} {
+	Trie(std::initializer_list<T> il) {
 		for (const T& value : il) { insert(value); }
 	}
 	// Attempts to insert a value, returns false iff already inserted.
@@ -150,6 +150,6 @@ private:
 	static bool hasChild(const pointer p, size_t idx) { return bool(Node::decode(p)->ptrs[idx]); }
 	static pointer getChild(const pointer p, size_t idx) { return Node::decode(p)->ptrs[idx]; }
 	// (!)
-	friend TrieTraversal<Trie, T>;
+	friend TrieTraversal<T>;
 	friend CompressedTrie<T>;
 };
