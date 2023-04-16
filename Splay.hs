@@ -1,88 +1,56 @@
 module Splay (Splay,insert,lookup,fromList) where
 import Prelude hiding (lookup)
-import Data.Monoid ((<>))
+import Data.Maybe (fromJust)
 
-data Splay a = Empty | Node a (Splay a) (Splay a) deriving Show
+data Splay a = Empty | Node a (Splay a) (Splay a)
+-- Pretty-printing
+instance Show a => Show (Splay a) where
+  show = show' 0
+    where show' _ Empty = ""
+          show' d (Node x l r) = show' (d+1) r ++ replicate (2*d) ' ' ++ show x ++ "\n" ++ show' (d+1) l
 
--- A list of directions forms a path from the root to another node.
-data Direction = L | R deriving Eq
+-- A list of directions encodes a path from the root to another node.
+data Direction = L | R
+
+-- A breadcrumb contains everything required to reconstruct a tree after a
+-- step down - the direction we took, the root and the other subtree.
+data Crumb a = Crumb Direction a (Splay a)
 
 -- Standard tree rotations
 rotate :: Direction -> Splay a -> Splay a
 rotate L (Node x a (Node y b c)) = (Node y (Node x a b) c)
 rotate R (Node y (Node x a b) c) = (Node x a (Node y b c))
 
--- Two-pass, bottom-up approach: insert the new value, returning
--- both the new tree and the path to the inserted value, and then
--- move this value to the root using the path.
--- Important: duplicate values are not allowed (!)
-insert :: Ord a => a -> Splay a -> Splay a
-insert x t = let (path, t') = pathToInserted x t in splay t' path
-  where pathToInserted :: Ord a => a -> Splay a -> ([Direction], Splay a)
-        pathToInserted x Empty = ([], Node x Empty Empty)
-        pathToInserted x t@(Node val l r)
-          | x == val = ([], t) -- x is already present, do not add it again
-          | x < val  = let (path,l') = pathToInserted x l in (L:path, Node val l' r)
-          | x > val  = let (path,r') = pathToInserted x r in (R:path, Node val l r')
+-- The first pass: descend the tree in search of val, while recording how to reconstruct it when going
+-- back upwards. Can either create a new node if val is not found, or return a Nothing.
+find :: Ord a => Bool -> a -> (Splay a, [Crumb a]) -> Maybe (Splay a, [Crumb a])
+find b val (Empty, cs) = if b then Just (Node val Empty Empty, cs) else Nothing
+find b val p@(Node x l r, cs)
+  | val == x = Just p -- found val somewhere in tree
+  | val < x  = find b val (l, Crumb L x r : cs)
+  | val > x  = find b val (r, Crumb R x l : cs)
 
--- Two-pass, bottom-up approach: first find a path to the searched
--- value, and if found, use this path to splay it to the root.
-lookup :: Ord a => a -> Splay a -> Maybe (Splay a)
-lookup x t = splay t <$> pathTo x t
-  where pathTo :: Ord a => a -> Splay a -> Maybe [Direction]
-        pathTo _ Empty = Nothing
-        pathTo x (Node val l r)
-          | x == val = Just []
-          | x < val  = (L:) <$> pathTo x l
-          | x > val  = (R:) <$> pathTo x r
-
--- The most crucial function: given a path to a value (either from lookup or
--- as a result from insertion), move it to the root, while preserving tree
--- balance & keeping recently accessed values still close to the new root.
-splay :: Splay a -> [Direction] -> Splay a
-splay t [] = t -- The value is already at the root
+-- The second, most crucial pass: given a subtree with root x and its path to
+-- the root, reconstruct the entire tree and simultaneously splay x up.
+splay :: (Splay a, [Crumb a]) -> (Splay a, [Crumb a])
+splay (t, []) = (t, [])
 -- Zig
-splay t [L] = rotate R t
-splay t [R] = rotate L t
+splay (t, [Crumb L x r]) = (rotate R $ Node x t r, [])
+splay (t, [Crumb R x l]) = (rotate L $ Node x l t, [])
 -- Zig-zig
-splay (Node q (Node p x c) d) (L:L:path) = rotate R $ rotate R (Node q (Node p (splay x path) c) d)
-splay (Node p a (Node q b x)) (R:R:path) = rotate L $ rotate L (Node p a (Node q b (splay x path)))
+splay (t, (Crumb L x r : Crumb L x' r' : cs)) = splay (rotate R $ rotate R (Node x' (Node x t r) r'), cs)
+splay (t, (Crumb R x l : Crumb R x' l' : cs)) = splay (rotate L $ rotate L (Node x' l' (Node x l t)), cs)
 -- Zig-zag
-splay (Node q (Node p a x) d) (L:R:path) = rotate R (Node q (rotate L $ Node p a (splay x path)) d)
-splay (Node p a (Node q x d)) (R:L:path) = rotate L (Node p a (rotate R $ Node q (splay x path) d))
+splay (t, (Crumb L x r : Crumb R x' l : cs)) = splay (rotate L $ Node x' l (rotate R $ Node x t r), cs)
+splay (t, (Crumb R x l : Crumb L x' r : cs)) = splay (rotate R $ Node x' (rotate L $ Node x l t) r, cs)
+
+-- Inserting and looking up a value are practically identical two-pass operations.
+insert :: Ord a => a -> Splay a -> Splay a
+insert x t = fst . splay . fromJust $ find True x (t,[])
+
+lookup :: Ord a => a -> Splay a -> Maybe (Splay a)
+lookup x t = fst . splay <$> find False x (t, [])
 
 -- Build a tree from the set (!) of values in a list
 fromList :: Ord a => [a] -> Splay a
-fromList = foldr insert Empty
-
--- You can fold over the values in a tree, or use Data.Foldable.toList
-instance Foldable Splay where
-  foldMap f Empty = mempty
-  foldMap f (Node val l r) = foldMap f l <> f val <> foldMap f r
-
--- Naive implementation, does not splay optimally (!)
--- Invariant: `insert' x _` returns a tree with x in its root
-insert' :: Ord a => a -> Splay a -> Splay a
-insert' x Empty = Node x Empty Empty
-insert' x t@(Node val l r)
-  | x == val = t
-  | x < val  = rotate R (Node val (insert' x l) r)
-  | x > val  = rotate L (Node val l (insert' x r))
-
--- Naive implementation, does not splay optimally (!)
--- Invariant: if `lookup x _` returns a tree, its root is x
-lookup' :: Ord a => a -> Splay a -> Maybe (Splay a)
-lookup' _ Empty = Nothing
-lookup' x t@(Node val l r)
-  | x == val = Just t
-  | x < val  = (\l1 -> rotate R (Node val l1 r)) <$> lookup' x l
-  | x > val  = (\r1 -> rotate L (Node val l r1)) <$> lookup' x r
-
--- Demo:
-main = do
-  putStrLn "> let t = fromList [1,4,2,5,3,4,2,6]"
-  let t = fromList [1,4,2,5,3,4,2,6]
-  putStrLn "> lookup 3 t"
-  print $ lookup 3 t
-  putStrLn "> lookup 7 t"
-  print $ lookup 7 t
+fromList = foldl (flip insert) Empty
