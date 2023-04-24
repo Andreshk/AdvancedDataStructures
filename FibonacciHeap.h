@@ -57,39 +57,39 @@ public:
         return { it };
     }
     // Removes & returns the minimum value in the heap. O(lgn) amortized time, O(n) worst-case (!)
-    // Can be noexcept only if it didn't copy the valule inside.
-    T extractMin() {
+    T extractMin() noexcept {
         using handle = DList<FNode<T>>::handle;
-        std::array<handle, 32> trees = {};
-        // The minimum's subtrees & the other trees are processed the same way
-        auto addTrees = [&](DList<FNode<T>>& ts) {
-            while (!ts.empty()) {
-                handle curr = ts.extract(ts.front());
-                int deg = curr->subtrees.size();
-                // If there's a tree with the same degree, merge with the current.
-                // This is the same as merging trees into a binomial heap :)
-                while (trees[deg]) {
-                    if (comp(curr->val, trees[deg]->val)) {
-                        trees[deg]->parent = curr.toIter();
-                        trees[deg]->marked = false;
-                        curr->subtrees.insert(std::move(trees[deg]));
-                    } else {
-                        curr->parent = trees[deg].toIter();
-                        curr->marked = false;
-                        trees[deg]->subtrees.insert(std::move(curr));
-                        curr = std::move(trees[deg]);
-                    }
-                    ++deg;
-                    assert(curr->subtrees.size() == deg);
-                }
-                trees[deg] = std::move(curr);
-            }
-        };
+        // 44 is the max degree such that F(d+2) < INT_MAX.
+        // For UINT_MAX it's 45, and 91 for UINT64_MAX 
+        std::array<handle, 45> trees = {};
         auto root = roots.front();
-        addTrees(root->subtrees);
-        T res = root->val;
+        // Orphan the subtrees before making them roots
+        for (auto& t : root->subtrees) { t.parent = {}; }
+        roots.append(std::move(root->subtrees));
+        T res = std::move(root->val);
         roots.remove(root);
-        addTrees(roots);
+        // This is called "consolidation" in the papers & textbooks
+        while (!roots.empty()) {
+            handle curr = roots.extract(roots.front());
+            int deg = curr->subtrees.size();
+            // If there's a tree with the same degree, merge with the current.
+            // This is the same as merging trees into a binomial heap :)
+            while (trees[deg]) {
+                if (comp(curr->val, trees[deg]->val)) {
+                    trees[deg]->parent = curr.toIter();
+                    trees[deg]->marked = false;
+                    curr->subtrees.insert(std::move(trees[deg]));
+                } else {
+                    curr->parent = trees[deg].toIter();
+                    curr->marked = false;
+                    trees[deg]->subtrees.insert(std::move(curr));
+                    curr = std::move(trees[deg]);
+                }
+                ++deg;
+                assert(curr->subtrees.size() == deg);
+            }
+            trees[deg] = std::move(curr);
+        }
         // Add all different-degree trees to the roots list,
         // simultaneously finding the one with the minimum value.
         assert(!root); // Will be reused for the new minimum
