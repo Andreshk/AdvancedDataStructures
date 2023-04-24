@@ -74,6 +74,7 @@ public:
             int deg = curr->subtrees.size();
             // If there's a tree with the same degree, merge with the current.
             // This is the same as merging trees into a binomial heap :)
+            // Each merge reduces the potential by one, making up for the actual time spent.
             while (trees[deg]) {
                 if (comp(curr->val, trees[deg]->val)) {
                     trees[deg]->parent = curr.toIter();
