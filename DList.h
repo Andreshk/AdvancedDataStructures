@@ -52,33 +52,99 @@ public:
         return *this;
     }
     ~DList() { clear(); }
-    // We can iterate, but can't tell when we're done. Also as barebones as possible
+    // The basic iterator is just a reference to a node and shouldn't be much more!
+    // Can be used for iteration, but cannot detect the end - use loop_iterator for that.
     class iterator {
         Node* ptr = nullptr;
         friend class DList; // Only the list can construct non-empty iterators to itself
         iterator(Node* ptr) : ptr{ ptr } {}
     public:
         iterator() = default;
-        T& operator*() const { return ptr->val; }
-        T* operator->() const { return &ptr->val; }
-        operator bool() const { return (ptr != nullptr); }
-        iterator& operator++() { ptr = ptr->next; return *this; }
-        iterator& operator--() { ptr = ptr->prev; return *this; }
-        bool operator==(const iterator&) const = default;
+        T& operator*() const noexcept { return ptr->val; }
+        T* operator->() const noexcept { return &ptr->val; }
+        operator bool() const noexcept { return (ptr != nullptr); }
+        iterator& operator++() noexcept { ptr = ptr->next; return *this; }
+        iterator& operator--() noexcept { ptr = ptr->prev; return *this; }
+        bool operator==(const iterator&) const noexcept = default;
     };
-    // Inserts a value at the end of the list (so, immediately before head)
+    // A handle is a (usually) temporary owner of a node, used to move nodes between lists.
+    // Obtained only from extract(), owns the memory for the node until it's used in insert().
+    class handle {
+        friend class DList; // Only the list can create non-empty handles to its nodes
+        Node* ptr;
+        handle(Node* ptr) : ptr{ ptr } {}
+    public:
+        handle() : ptr{ nullptr } {}
+        handle(handle&& other) noexcept : ptr{ std::exchange(other.ptr, nullptr) } {}
+        handle& operator=(handle&& other) noexcept {
+            ptr = std::exchange(other.ptr, nullptr);
+            return *this;
+        }
+        // Avoid memory leaks from un-inserted handles
+        ~handle() {
+            if (ptr) { delete ptr; }
+        }
+        T& operator*() const noexcept { return ptr->val; }
+        T* operator->() const noexcept { return &ptr->val; }
+        operator bool() const noexcept { return (ptr != nullptr); }
+        // Convert to reguler, non-owning iterator - not for direct use (!)
+        iterator toIter() const noexcept { return { ptr }; }
+    };
+
+    // Insertion is done at the end of the list (so, immediately before head)
     iterator insert(const T& val) {
         return insert(handle{ new Node{val} });
     }
     iterator insert(T&& val) {
         return insert(handle{ new Node{std::move(val)} });
     }
+    // Note that this resets the handle, so it doesn't attempt to free the memory on scope exit later.
+    iterator insert(handle&& hnd) noexcept {
+        assert(hnd.ptr->prev == nullptr && hnd.ptr->next == nullptr);
+        if (head == nullptr) {
+            head = hnd.ptr;
+            head->prev = head->next = head;
+        } else {
+            // The "back" in a circular list is just before head, or the "front"
+            head->prev->next = hnd.ptr;
+            hnd.ptr->prev = head->prev;
+            head->prev = hnd.ptr;
+            hnd.ptr->next = head;
+        }
+        ++numValues;
+        return { std::exchange(hnd.ptr, nullptr) };
+    }
+
     // Removes a value from the list, resetting the iterator to avoid use-after-free
     void remove(iterator& it) noexcept {
-        handle h = extract(it);
+        handle h = extract(it); // memory freed when this goes out of scope
         it.ptr = nullptr;
-        // memory freed in ~handle()
     }
+    // Extracts a node from the list, without destroying the value or deallocating the memory.
+    // This node can then be inserted into some (possibly other) list.
+    handle extract(iterator it) noexcept {
+        Node* ptr = it.ptr;
+        // Mostly safe otherwise - unless it's the only node in its list! So, better safe than sorry
+        assert(head && reachable(ptr));
+        // Advance to reduce # of cases afterwards
+        if (ptr == head) {
+            head = head->next;
+        }
+        if (ptr == head) {
+            assert(head->prev == head && head->next == head);
+            head = nullptr;
+        } else {
+            Node* prev = ptr->prev;
+            Node* next = ptr->next;
+            assert(ptr == prev->next && ptr == next->prev);
+            prev->next = next;
+            next->prev = prev;
+        }
+        DEBUG_ONLY(ptr->prev = ptr->next = nullptr); // not relied on :)
+        --numValues;
+        return { ptr };
+    }
+
     // Checks whether the list is empty
     [[nodiscard("Did you mean .clear()?")]]
     bool empty() const noexcept {
@@ -99,6 +165,7 @@ public:
         head = nullptr;
         numValues = 0;
     }
+
     // Append another list, leaving it empty afterwards
     void append(DList&& other) noexcept {
         assert(this != &other); // Copying nodes would be needed
@@ -130,71 +197,6 @@ public:
         head = it.ptr;
     }
 
-    // A handle to an orphaned node, used to move nodes (with the contained values) between lists.
-    // Obtained only from extract(), owns the memory for the node until it's used in insert().
-    class handle {
-        friend class DList; // Only the list can manage handles, nothing for the user to do
-        Node* ptr;
-        handle(Node* ptr) : ptr{ ptr } {}
-    public:
-        handle() : ptr{ nullptr } {}
-        handle(handle&& other) noexcept : ptr{ std::exchange(other.ptr, nullptr) } {}
-        handle& operator=(handle&& other) noexcept {
-            ptr = std::exchange(other.ptr, nullptr);
-            return *this;
-        }
-        // Avoid memory leaks from un-inserted handles
-        ~handle() {
-            if (ptr) { delete ptr; }
-        }
-        T& operator*() const { return ptr->val; }
-        T* operator->() const { return &ptr->val; }
-        operator bool() const { return (ptr != nullptr); }
-        // Convert to reguler, non-owning iterator - not for direct use (!)
-        iterator toIter() const noexcept { return { ptr }; }
-    };
-    // Extracts a node from the list, without destoying the value or deallocating the memory.
-    // This node can then be inserted into some (possibly other) list.
-    handle extract(iterator it) noexcept {
-        Node* ptr = it.ptr;
-        // Mostly safe otherwise - unless it's the only node in its list! So, better safe than sorry
-        assert(reachable(ptr));
-        // Advance to reduce # of cases afterwards
-        if (ptr == head) {
-            head = head->next;
-        }
-        if (ptr == head) {
-            assert(head->prev == head && head->next == head);
-            head = nullptr;
-        } else {
-            Node* prev = ptr->prev;
-            Node* next = ptr->next;
-            assert(ptr == prev->next && ptr == next->prev);
-            prev->next = next;
-            next->prev = prev;
-        }
-        DEBUG_ONLY(ptr->prev = ptr->next = nullptr); // not relied on :)
-        --numValues;
-        return { ptr };
-    }
-    // Inserts a value at the end of the list (so, immediately before head)
-    // Note that it resets the handle, so it doesn't attempt to free the memory on scope exit later.
-    iterator insert(handle&& hnd) noexcept {
-        // The "back" in a circular list is just before head, or the "front"
-        assert(hnd.ptr->prev == nullptr && hnd.ptr->next == nullptr);
-        if (head == nullptr) {
-            head = hnd.ptr;
-            head->prev = head->next = head;
-        } else {
-            head->prev->next = hnd.ptr;
-            hnd.ptr->prev = head->prev;
-            head->prev = hnd.ptr;
-            hnd.ptr->next = head;
-        }
-        ++numValues;
-        return { std::exchange(hnd.ptr, nullptr) };
-    }
-
     // Note: looping over values requires a different kind of iterators, storing more data!
     class loop_iterator {
         iterator it;
@@ -204,13 +206,13 @@ public:
     public:
         using value_type = T;
         loop_iterator() = default;
-        T& operator*() const { return *it; }
-        T* operator->() const { return &*it; }
-        operator bool() const { return bool(it); } // Only a default-constructed can be empty
-        loop_iterator& operator++() { ++it; b = false; return *this; }
-        loop_iterator operator++(int) { auto copy = *this; ++*this; return copy; }
-        bool operator==(const loop_iterator&) const = default;
+        T& operator*() const noexcept { return *it; }
+        T* operator->() const noexcept { return &*it; }
+        operator bool() const noexcept { return bool(it); } // Only a default-constructed can be empty
+        loop_iterator& operator++() noexcept { ++it; b = false; return *this; }
+        loop_iterator operator++(int) noexcept { auto copy = *this; ++*this; return copy; }
+        bool operator==(const loop_iterator&) const noexcept = default;
     };
-    loop_iterator begin() const { return { {head}, !empty() }; }
-    loop_iterator end() const { return { {head}, false }; }
+    loop_iterator begin() const noexcept { return { {head}, !empty() }; }
+    loop_iterator end() const noexcept { return { {head}, false }; }
 };
