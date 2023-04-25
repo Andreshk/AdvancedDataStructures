@@ -119,7 +119,7 @@ public:
         // The first iteration may cut a node and the last (may also be the first) may mark one,
         // but each iteration between them will unmark & cut a node, decreasing the potential by 1.
         // This decrease makes up for the actual time spent :)
-        while (curr->parent && toRemove) {
+        while (toRemove) {
             // Cut the current node & add it to the roots list
             curr->marked = false; // See CUT(H,x,y) in CLRS
             auto parent = std::exchange(curr->parent, {});
@@ -130,10 +130,9 @@ public:
                 roots.rotate(curr);
                 newMin = false;
             }
-            // Unless the parent is a root, mark it and record whether it was marked before
-            toRemove = parent->parent && std::exchange(parent->marked, true);
-            // Move up
+            // Advance to the parent & mark it for removal if it's not a root
             curr = parent;
+            toRemove = curr->parent && std::exchange(curr->marked, true);
         }
         return true;
     }
@@ -150,7 +149,7 @@ public:
     // Returns the # of values in the heap
     int size() const noexcept { return numValues; }
     // Merge another heap into the current. O(1) time (total potential does not increase)
-    void merge(FibonacciHeap&& other) {
+    void merge(FibonacciHeap&& other) noexcept {
         assert(this != &other);
         if (other.empty()) {
             return;
@@ -167,7 +166,7 @@ public:
     }
     // Checks the heap property of each tree & whether every node has the correct parent pointer.
     // Obviously O(n), use for testing only.
-    bool validate() const {
+    bool validate() const noexcept {
         return [&](this auto&& self, const DList<FNode<T>>& nodes, const DList<FNode<T>>::loop_iterator parent) -> bool {
             // This is std::ranges::all
             for (auto it = nodes.begin(); it != nodes.end(); ++it) {
@@ -179,6 +178,6 @@ public:
         }(roots, {});
     }
 
-    // Pretty-printing
+    // Pretty-printing, see FibonacciHeapFormat.h
     friend struct fmt::formatter<FibonacciHeap<T>>;
 };
