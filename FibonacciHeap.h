@@ -110,18 +110,17 @@ public:
     // Decreases the value in the heap, pointed by the given iterator. O(1) amortized time
     void decreaseKey(iterator it, const T& newVal) {
         assert(!comp(*it, newVal)); // This is not an "increase"
-        auto curr = it.it, parent = curr->parent;
+        auto curr = it.it;
         curr->val = newVal;
-        bool toRemove = parent && comp(newVal, parent->val);
+        bool toRemove = curr->parent && comp(newVal, curr->parent->val);
         bool first = true;
         // Each iteration except the first and last unmarks & cuts a node, decreasing the potential by 1.
         // This decrease makes up for the actual time spent :)
-        while (parent && toRemove) {
-            assert(parent == curr->parent); // Convenience
+        while (curr->parent && toRemove) {
             // Cut the current node & add it to the roots list
-            auto hnd = parent->subtrees.extract(curr);
-            hnd->marked = false; // See CUT(H,x,y) in CLRS
-            roots.insert(std::move(hnd));
+            curr->marked = false; // See CUT(H,x,y) in CLRS
+            auto parent = std::exchange(curr->parent, {});
+            roots.insert(parent->subtrees.extract(curr));
             // The first new root is the newly decreased key and may become the new minimum
             if (first && comp(curr->val, roots.front()->val)) {
                 roots.rotate(curr);
@@ -129,8 +128,7 @@ public:
             // Mark the parent, but record whether it was marked before
             toRemove = std::exchange(parent->marked, true);
             // Move up and cut the new root's link to its previous parent
-            curr = std::exchange(parent, {});
-            parent = curr->parent;
+            curr = parent;
             // The remaining nodes to be cut are non-root nodes,
             // and are surely >= than the corresponding root, so can't become the new min root
             first = false;
@@ -163,6 +161,19 @@ public:
             roots = std::move(other.roots);
         }
         numValues += std::exchange(other.numValues, 0);
+    }
+    // Checks the heap property of each tree & whether every node has the correct parent pointer.
+    // Obviously O(n), use for testing only.
+    bool validate() const {
+        return [&](this auto&& self, const DList<FNode<T>>& nodes, const DList<FNode<T>>::loop_iterator parent) -> bool {
+            // This is std::ranges::all
+            for (auto it = nodes.begin(); it != nodes.end(); ++it) {
+                if ((parent && comp(it->val, parent->val)) || it->parent != parent || !self(it->subtrees, it)) {
+                    return false;
+                }
+            }
+            return true;
+        }(roots, {});
     }
 
     // Pretty-printing
