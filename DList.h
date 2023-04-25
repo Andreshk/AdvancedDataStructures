@@ -62,7 +62,7 @@ public:
         iterator() = default;
         T& operator*() const noexcept { return ptr->val; }
         T* operator->() const noexcept { return &ptr->val; }
-        operator bool() const noexcept { return (ptr != nullptr); }
+        explicit operator bool() const noexcept { return (ptr != nullptr); }
         iterator& operator++() noexcept { ptr = ptr->next; return *this; }
         iterator& operator--() noexcept { ptr = ptr->prev; return *this; }
         bool operator==(const iterator&) const noexcept = default;
@@ -86,7 +86,7 @@ public:
         }
         T& operator*() const noexcept { return ptr->val; }
         T* operator->() const noexcept { return &ptr->val; }
-        operator bool() const noexcept { return (ptr != nullptr); }
+        explicit operator bool() const noexcept { return (ptr != nullptr); }
         // Convert to reguler, non-owning iterator - not for direct use (!)
         iterator toIter() const noexcept { return { ptr }; }
     };
@@ -204,14 +204,16 @@ public:
         friend class DList;
         loop_iterator(iterator it, bool b) : it{ it }, b{ b } {}
     public:
-        using value_type = T;
+        using value_type      = T;
+        using difference_type = int;
         loop_iterator() = default;
         T& operator*() const noexcept { return *it; }
         T* operator->() const noexcept { return &*it; }
-        operator bool() const noexcept { return bool(it); } // Only a default-constructed can be empty
+        explicit operator bool() const noexcept { return bool(it); } // Only a default-constructed can be empty
         loop_iterator& operator++() noexcept { ++it; b = false; return *this; }
         loop_iterator operator++(int) noexcept { auto copy = *this; ++*this; return copy; }
         bool operator==(const loop_iterator&) const noexcept = default;
+        bool operator==(const iterator& other) const noexcept { return (it == other); }
     };
     loop_iterator begin() const noexcept { return { {head}, !empty() }; }
     loop_iterator end() const noexcept { return { {head}, false }; }
