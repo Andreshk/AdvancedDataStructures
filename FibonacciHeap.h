@@ -108,31 +108,34 @@ public:
         return res;
     }
     // Decreases the value in the heap, pointed by the given iterator. O(1) amortized time
-    void decreaseKey(iterator it, const T& newVal) {
-        assert(!comp(*it, newVal)); // This is not an "increase"
+    bool decreaseKey(iterator it, const T& newVal) {
+        if (!comp(newVal, *it)) { // This is not a decrease
+            return false;
+        }
         auto curr = it.it;
         curr->val = newVal;
         bool toRemove = curr->parent && comp(newVal, curr->parent->val);
-        bool first = true;
-        // Each iteration except the first and last unmarks & cuts a node, decreasing the potential by 1.
+        bool newMin = comp(newVal, roots.front()->val);
+        // The first iteration may cut a node and the last (may also be the first) may mark one,
+        // but each iteration between them will unmark & cut a node, decreasing the potential by 1.
         // This decrease makes up for the actual time spent :)
         while (curr->parent && toRemove) {
             // Cut the current node & add it to the roots list
             curr->marked = false; // See CUT(H,x,y) in CLRS
             auto parent = std::exchange(curr->parent, {});
             roots.insert(parent->subtrees.extract(curr));
-            // The first new root is the newly decreased key and may become the new minimum
-            if (first && comp(curr->val, roots.front()->val)) {
+            // The first cut node (with the new value) is the newly decreased key and may become the new minimum,
+            // but the remaining are non-roots and not changed, so will not become minimums when cut.
+            if (newMin) {
                 roots.rotate(curr);
+                newMin = false;
             }
-            // Mark the parent, but record whether it was marked before
-            toRemove = std::exchange(parent->marked, true);
-            // Move up and cut the new root's link to its previous parent
+            // Unless the parent is a root, mark it and record whether it was marked before
+            toRemove = parent->parent && std::exchange(parent->marked, true);
+            // Move up
             curr = parent;
-            // The remaining nodes to be cut are non-root nodes,
-            // and are surely >= than the corresponding root, so can't become the new min root
-            first = false;
         }
+        return true;
     }
     // Returns the minimum value in the heap
     const T& peekMin() const noexcept {
